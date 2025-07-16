@@ -21,6 +21,14 @@ public class CardSelector : MonoBehaviour, IPointerDownHandler, IBeginDragHandle
     private Vector3 dragOffset;
     private Camera mainCamera;
 
+    // Action area logic
+    [Header("Action Area Mechanics")]
+    public float actionAreaScale = 0.7f;
+    private bool inActionArea = false;
+    private Coroutine scaleCoroutine = null;
+    private Vector3 targetScale;
+
+
     void Awake()
     {
         mainCamera = Camera.main;
@@ -141,6 +149,45 @@ public void OnDrag(PointerEventData eventData)
     transform.position = GetPointerWorldPosition(eventData) + dragOffset;
 }
 
+// Action area trigger detection
+void OnTriggerEnter2D(Collider2D other)
+{
+    if (other.CompareTag("Action"))
+    {
+        inActionArea = true;
+        StartScaleCoroutine(originalScale * actionAreaScale);
+    }
+}
+
+void OnTriggerExit2D(Collider2D other)
+{
+    if (other.CompareTag("Action"))
+    {
+        inActionArea = false;
+        StartScaleCoroutine(originalScale);
+    }
+}
+
+void StartScaleCoroutine(Vector3 scaleTarget)
+{
+    if (scaleCoroutine != null) StopCoroutine(scaleCoroutine);
+    scaleCoroutine = StartCoroutine(SmoothScale(scaleTarget));
+}
+
+IEnumerator SmoothScale(Vector3 scaleTarget)
+{
+    float t = 0f;
+    Vector3 start = transform.localScale;
+    while (t < 1f)
+    {
+        t += Time.deltaTime * 10f; // Speed can be tweaked
+        transform.localScale = Vector3.Lerp(start, scaleTarget, t);
+        yield return null;
+    }
+    transform.localScale = scaleTarget;
+}
+
+
 public void OnEndDrag(PointerEventData eventData)
 {
     isDragging = false;
@@ -148,10 +195,22 @@ public void OnEndDrag(PointerEventData eventData)
     var sr = GetComponent<SpriteRenderer>();
     if (sr) sr.sortingOrder = defaultSortingOrder;
 
+    if (inActionArea)
+    {
+        // For now, destroy card (later: send to discard)
+        Destroy(gameObject);
+        return;
+    }
+
     // If the card is still popped after dragging, reset it to hand layout
     if (isPopped)
     {
         ResetPop();
+    }
+    else
+    {
+        // Return to original scale if not popped
+        StartScaleCoroutine(originalScale);
     }
 }
 
