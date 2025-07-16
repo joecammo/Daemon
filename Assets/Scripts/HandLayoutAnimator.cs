@@ -6,7 +6,7 @@ using UnityEngine;
 public class HandLayoutAnimator : MonoBehaviour
 {
     [Header("Card Pop Settings")]
-    public float popYOffset = 1.0f; // How much to move up when popped
+    public float popYOffset = 1.5f; // How much to move up when popped
     public float popScaleMultiplier = 1.2f; // How much to scale up when popped
 
     private CardSelector currentlyPoppedCard = null;
@@ -140,6 +140,16 @@ if (selector != null)
         currentlyPoppedCard = card;
         Vector3 popOffset = new Vector3(0, popYOffset, 0);
         card.PopOut(popOffset, popScaleMultiplier);
+    }
+
+    // Called when a card starts being dragged
+    public void OnCardDragStart(CardSelector draggingCard)
+    {
+        if (currentlyPoppedCard != null && currentlyPoppedCard != draggingCard)
+        {
+            currentlyPoppedCard.ResetPop();
+            currentlyPoppedCard = null;
+        }
     }
 
     // Helper method to extract the card number from its name

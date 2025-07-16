@@ -3,7 +3,7 @@ using UnityEngine;
 using UnityEngine.EventSystems;
 
 // Note: For IPointerClickHandler to work with 2D objects, you need an EventSystem in your scene and a Physics2DRaycaster on your camera.
-public class CardSelector : MonoBehaviour, IPointerClickHandler
+public class CardSelector : MonoBehaviour, IPointerDownHandler, IBeginDragHandler, IDragHandler, IEndDragHandler, IPointerClickHandler
 {
     private Vector3 layoutPosition;
     private Quaternion layoutRotation;
@@ -16,12 +16,22 @@ public class CardSelector : MonoBehaviour, IPointerClickHandler
     private HandLayoutAnimator handLayout;
     private int defaultSortingOrder = 0;
 
+    // Drag-and-drop fields
+    private bool isDragging = false;
+    private Vector3 dragOffset;
+    private Camera mainCamera;
+
+    void Awake()
+    {
+        mainCamera = Camera.main;
+    }
+
     void Start()
     {
         layoutPosition = transform.position;
         originalScale = transform.localScale;
         originalRotation = transform.rotation;
-        handLayout = FindFirstObjectByType<HandLayoutAnimator>();
+        handLayout = FindObjectOfType<HandLayoutAnimator>();
     }
 
     // Called by HandLayoutAnimator after layout animation
@@ -104,5 +114,58 @@ public class CardSelector : MonoBehaviour, IPointerClickHandler
         transform.rotation = targetRot;
         transform.localScale = targetScale;
     }
+// EventSystem drag-and-drop handlers
+public void OnPointerDown(PointerEventData eventData)
+{
+    if (!CanDrag()) return;
+    dragOffset = transform.position - GetPointerWorldPosition(eventData);
+}
 
+public void OnBeginDrag(PointerEventData eventData)
+{
+    if (!CanDrag()) return;
+    isDragging = true;
+    // Notify handLayout to reset any popped card (unless it's this one)
+    if (handLayout != null)
+    {
+        handLayout.OnCardDragStart(this);
+    }
+    // Bring to front visually
+    var sr = GetComponent<SpriteRenderer>();
+    if (sr) sr.sortingOrder = 200;
+}
+
+public void OnDrag(PointerEventData eventData)
+{
+    if (!isDragging) return;
+    transform.position = GetPointerWorldPosition(eventData) + dragOffset;
+}
+
+public void OnEndDrag(PointerEventData eventData)
+{
+    isDragging = false;
+    // Restore original sorting order
+    var sr = GetComponent<SpriteRenderer>();
+    if (sr) sr.sortingOrder = defaultSortingOrder;
+
+    // If the card is still popped after dragging, reset it to hand layout
+    if (isPopped)
+    {
+        ResetPop();
+    }
+}
+
+Vector3 GetPointerWorldPosition(PointerEventData eventData)
+{
+    Camera cam = mainCamera != null ? mainCamera : Camera.main;
+    Vector3 screenPos = eventData.position;
+    screenPos.z = Mathf.Abs(cam.transform.position.z - transform.position.z);
+    return cam.ScreenToWorldPoint(screenPos);
+}
+
+bool CanDrag()
+{
+    // Allow drag as long as not already dragging
+    return !isDragging;
+}
 }
