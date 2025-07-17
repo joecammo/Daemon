@@ -5,6 +5,10 @@ using UnityEngine.EventSystems;
 // Note: For IPointerClickHandler to work with 2D objects, you need an EventSystem in your scene and a Physics2DRaycaster on your camera.
 public class CardSelector : MonoBehaviour, IPointerDownHandler, IBeginDragHandler, IDragHandler, IEndDragHandler, IPointerClickHandler
 {
+    // Card type definition
+    public enum CardType { Skill, Attack }
+    [Header("Card Type")]
+    public CardType cardType = CardType.Skill;
     private Vector3 layoutPosition;
     private Quaternion layoutRotation;
     private Vector3 originalScale;
@@ -24,9 +28,11 @@ public class CardSelector : MonoBehaviour, IPointerDownHandler, IBeginDragHandle
     // Action area logic
     [Header("Action Area Mechanics")]
     public float actionAreaScale = 0.7f;
+    public float scaleSpeed = 10f;
     private bool inActionArea = false;
-    private Coroutine scaleCoroutine = null;
-    private Vector3 targetScale;
+    private Vector3 desiredScale;
+    private Collider2D actionAreaCollider;
+    private Enemy hoveredEnemy = null;
 
 
     void Awake()
@@ -40,6 +46,16 @@ public class CardSelector : MonoBehaviour, IPointerDownHandler, IBeginDragHandle
         originalScale = transform.localScale;
         originalRotation = transform.rotation;
         handLayout = FindObjectOfType<HandLayoutAnimator>();
+        desiredScale = originalScale;
+
+        GameObject actionArea = GameObject.FindGameObjectWithTag("Action");
+        if (actionArea != null)
+            actionAreaCollider = actionArea.GetComponent<Collider2D>();
+    }
+
+    void Update()
+    {
+        transform.localScale = Vector3.Lerp(transform.localScale, desiredScale, Time.deltaTime * scaleSpeed);
     }
 
     // Called by HandLayoutAnimator after layout animation
@@ -102,6 +118,7 @@ public class CardSelector : MonoBehaviour, IPointerDownHandler, IBeginDragHandle
         // Reset sorting order
         var sr = GetComponent<SpriteRenderer>();
         if (sr) sr.sortingOrder = defaultSortingOrder; // Restore original order
+        desiredScale = originalScale;
     }
 
     IEnumerator AnimatePop(Vector3 targetPos, Quaternion targetRot, Vector3 targetScale)
@@ -147,45 +164,49 @@ public void OnDrag(PointerEventData eventData)
 {
     if (!isDragging) return;
     transform.position = GetPointerWorldPosition(eventData) + dragOffset;
-}
 
-// Action area trigger detection
-void OnTriggerEnter2D(Collider2D other)
-{
-    if (other.CompareTag("Action"))
+    // --- SkillDrop area detection (for Skill cards) ---
+    if (actionAreaCollider != null)
     {
-        inActionArea = true;
-        StartScaleCoroutine(originalScale * actionAreaScale);
+        bool nowInAction = actionAreaCollider.OverlapPoint(transform.position);
+        if (nowInAction != inActionArea)
+        {
+            inActionArea = nowInAction;
+            desiredScale = inActionArea ? originalScale * actionAreaScale : originalScale;
+        }
+    }
+
+    // --- Attack card targeting ---
+    if (cardType == CardType.Attack)
+    {
+        Enemy enemyUnderPointer = null;
+        Collider2D[] hits = Physics2D.OverlapPointAll(transform.position);
+        foreach (var hit in hits)
+        {
+            if (hit.CompareTag("Enemy"))
+            {
+                enemyUnderPointer = hit.GetComponent<Enemy>();
+                break;
+            }
+        }
+        if (hoveredEnemy != enemyUnderPointer)
+        {
+            if (hoveredEnemy != null) hoveredEnemy.Highlight(false);
+            hoveredEnemy = enemyUnderPointer;
+            if (hoveredEnemy != null) hoveredEnemy.Highlight(true);
+        }
+    }
+    else
+    {
+        // Not an attack card, ensure no enemy is highlighted
+        if (hoveredEnemy != null)
+        {
+            hoveredEnemy.Highlight(false);
+            hoveredEnemy = null;
+        }
     }
 }
 
-void OnTriggerExit2D(Collider2D other)
-{
-    if (other.CompareTag("Action"))
-    {
-        inActionArea = false;
-        StartScaleCoroutine(originalScale);
-    }
-}
-
-void StartScaleCoroutine(Vector3 scaleTarget)
-{
-    if (scaleCoroutine != null) StopCoroutine(scaleCoroutine);
-    scaleCoroutine = StartCoroutine(SmoothScale(scaleTarget));
-}
-
-IEnumerator SmoothScale(Vector3 scaleTarget)
-{
-    float t = 0f;
-    Vector3 start = transform.localScale;
-    while (t < 1f)
-    {
-        t += Time.deltaTime * 10f; // Speed can be tweaked
-        transform.localScale = Vector3.Lerp(start, scaleTarget, t);
-        yield return null;
-    }
-    transform.localScale = scaleTarget;
-}
 
 
 public void OnEndDrag(PointerEventData eventData)
@@ -195,11 +216,36 @@ public void OnEndDrag(PointerEventData eventData)
     var sr = GetComponent<SpriteRenderer>();
     if (sr) sr.sortingOrder = defaultSortingOrder;
 
-    if (inActionArea)
+    // --- SkillDrop logic ---
+    if (inActionArea && cardType == CardType.Skill)
     {
         // For now, destroy card (later: send to discard)
         Destroy(gameObject);
         return;
+    }
+
+    // --- Attack card drop logic ---
+    if (cardType == CardType.Attack)
+    {
+        if (hoveredEnemy != null)
+        {
+            hoveredEnemy.TakeDamage(1); // Stub: deal 1 damage
+            hoveredEnemy.Highlight(false);
+            hoveredEnemy = null;
+            Destroy(gameObject);
+            return;
+        }
+        else
+        {
+            Debug.Log($"Attack card '{gameObject.name}' not released over enemy. Returning to hand.");
+        }
+    }
+
+    // Cleanup highlight if needed
+    if (hoveredEnemy != null)
+    {
+        hoveredEnemy.Highlight(false);
+        hoveredEnemy = null;
     }
 
     // If the card is still popped after dragging, reset it to hand layout
@@ -210,7 +256,7 @@ public void OnEndDrag(PointerEventData eventData)
     else
     {
         // Return to original scale if not popped
-        StartScaleCoroutine(originalScale);
+        desiredScale = originalScale;
     }
 }
 
