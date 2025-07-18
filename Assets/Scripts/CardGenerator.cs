@@ -20,7 +20,17 @@ public class CardGenerator : MonoBehaviour
 
     void Start()
     {
-        StartCoroutine(GenerateCardsFromSpreadsheet());
+        if (DaemonAffinityManager.Instance != null)
+        {
+            DaemonAffinityManager.Instance.LoadDaemonsAffinity(() =>
+            {
+                StartCoroutine(GenerateCardsFromSpreadsheet());
+            });
+        }
+        else
+        {
+            Debug.LogError("DaemonAffinityManager.Instance is null! Make sure it's in the scene before CardGenerator runs.");
+        }
     }
 
     IEnumerator GenerateCardsFromSpreadsheet()
@@ -138,42 +148,62 @@ public class CardGenerator : MonoBehaviour
         int titleIdx = System.Array.IndexOf(header, "Title");
         int daemonIdx = System.Array.IndexOf(header, "Daemon");
         int qtyIdx = System.Array.IndexOf(header, "Quantity");
-        List<CardData> deckList = new List<CardData>();
-        for (int i = 1; i < rows.Count; i++)
-        {
-            var row = rows[i];
-            if (row.Length <= Mathf.Max(titleIdx, daemonIdx, qtyIdx)) continue;
-            if (string.IsNullOrWhiteSpace(row[titleIdx])) continue;
-            string title = row[titleIdx].Trim();
-            int quantity = int.TryParse(row[qtyIdx], out int q) ? q : 1;
-            if (!abilitiesDict.ContainsKey(title)) {
-                Debug.LogWarning($"[CardGenerator] PlayerDeck references unknown card: {title}");
-                continue;
-            }
-            var cardData = abilitiesDict[title];
-            for (int j = 0; j < quantity; j++)
-            {
-                deckList.Add(cardData);
-                Debug.Log($"[CardGenerator] Added card to deck: {cardData.title}");
-            }
-        }
+        List<DeckEntry> deckList = new List<DeckEntry>();
+for (int i = 1; i < rows.Count; i++)
+{
+    var row = rows[i];
+    if (row.Length <= Mathf.Max(titleIdx, daemonIdx, qtyIdx)) continue;
+    if (string.IsNullOrWhiteSpace(row[titleIdx])) continue;
+    string title = row[titleIdx].Trim();
+    string daemonName = row[daemonIdx].Trim();
+    int quantity = int.TryParse(row[qtyIdx], out int q) ? q : 1;
+    if (!abilitiesDict.ContainsKey(title)) {
+        Debug.LogWarning($"[CardGenerator] PlayerDeck references unknown card: {title}");
+        continue;
+    }
+    var cardData = abilitiesDict[title];
+    for (int j = 0; j < quantity; j++)
+    {
+        deckList.Add(new DeckEntry { card = cardData, daemonName = daemonName });
+        Debug.Log($"[CardGenerator] Added card to deck: {cardData.title} for daemon {daemonName}");
+    }
+}
         Debug.Log($"[CardGenerator] Total cards to instantiate: {deckList.Count}");
         // Shuffle deckList
         deckList = deckList.OrderBy(x => Random.value).ToList();
-        // Instantiate cards
-        List<GameObject> instantiatedCards = new List<GameObject>();
-        foreach (var card in deckList)
+// Instantiate cards
+List<GameObject> instantiatedCards = new List<GameObject>();
+foreach (var entry in deckList)
+{
+    var card = entry.card;
+    string daemonName = entry.daemonName;
+    // Instantiate cards directly under CardDropZone (the hand)
+    var cardObj = Instantiate(cardPrefab, cardDropZoneParent);
+    instantiatedCards.Add(cardObj);
+    Debug.Log($"[CardGenerator] Instantiated card: {card.title} for daemon {daemonName}");
+    var display = cardObj.GetComponent<CardDisplay>();
+    if (display)
+    {
+        Color affinityColor = Color.white;
+        if (!string.IsNullOrEmpty(daemonName))
         {
-            // Instantiate cards directly under CardDropZone (the hand)
-            var cardObj = Instantiate(cardPrefab, cardDropZoneParent);
-            instantiatedCards.Add(cardObj);
-            Debug.Log($"[CardGenerator] Instantiated card: {card.title}");
-            var display = cardObj.GetComponent<CardDisplay>();
-            if (display)
+            if (DaemonAffinityManager.Instance != null && DaemonAffinityManager.Instance.TryGetAffinity(daemonName, out var affinity))
             {
-                display.SetCard(card.title, card.cost, card.type, card.effect, AffinityToColor(card.affinity));
+                affinityColor = AffinityColor.GetColor(affinity);
+            }
+            else
+            {
+                // fallback: use card.affinity from Abilities sheet
+                affinityColor = AffinityColor.GetColor(AffinityColor.FromString(card.affinity));
             }
         }
+        else
+        {
+            affinityColor = AffinityColor.GetColor(AffinityColor.FromString(card.affinity));
+        }
+        display.SetCard(card.title, card.cost, card.type, card.effect, affinityColor);
+    }
+}
         // Arrange cards in fan layout after instantiation
         var layout = cardDropZoneParent.GetComponent<HandLayoutAnimator>();
         if (layout != null)
@@ -182,23 +212,20 @@ public class CardGenerator : MonoBehaviour
         }
     }
 
-    Color AffinityToColor(string affinity)
-    {
-        switch (affinity.Trim().ToLower())
-        {
-            case "blue": return new Color(0.3f, 0.5f, 1f);
-            case "red": return new Color(1f, 0.3f, 0.3f);
-            case "purple": return new Color(0.7f, 0.3f, 1f);
-            default: return Color.white;
-        }
-    }
+    
 
-    class CardData
-    {
-        public string title;
-        public string affinity;
-        public string cost;
-        public string type;
-        public string effect;
-    }
+    class DeckEntry
+{
+    public CardData card;
+    public string daemonName;
+}
+
+class CardData
+{
+    public string title;
+    public string affinity;
+    public string cost;
+    public string type;
+    public string effect;
+}
 }
