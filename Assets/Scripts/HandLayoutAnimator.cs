@@ -9,7 +9,7 @@ public class HandLayoutAnimator : MonoBehaviour
     public float popYOffset = 1.5f; // How much to move up when popped
     public float popScaleMultiplier = 1.2f; // How much to scale up when popped
 
-    private CardSelector currentlyPoppedCard = null;
+    public CardSelector currentlyPoppedCard = null;
 
     [Header("Card Layout Settings")]
     public Transform cardParent; // Parent object containing all card GameObjects
@@ -119,12 +119,27 @@ public class HandLayoutAnimator : MonoBehaviour
             else
                 startWorld[i] = cards[i].position;
         }
+        // Remove any null or destroyed cards before starting animation
+        for (int i = cards.Count - 1; i >= 0; i--)
+        {
+            if (cards[i] == null)
+            {
+                cards.RemoveAt(i);
+                finalAnchoredPositions.RemoveAt(i);
+                finalWorldPositions.RemoveAt(i);
+                if (i < startAnchored.Length) startAnchored = startAnchored.Where((val, idx) => idx != i).ToArray();
+                if (i < startWorld.Length) startWorld = startWorld.Where((val, idx) => idx != i).ToArray();
+            }
+        }
         while (t < duration)
         {
             t += Time.deltaTime;
             float lerp = Mathf.Clamp01(t / duration);
             for (int i = 0; i < cards.Count; i++)
             {
+                // Skip null or destroyed cards
+                if (cards[i] == null) continue;
+
                 bool isPopped = (currentlyPoppedCard != null && cards[i].GetComponent<CardSelector>() == currentlyPoppedCard);
                 Vector2 targetPos = finalAnchoredPositions[i];
                 Vector3 targetScale = Vector3.one;
@@ -156,11 +171,18 @@ public class HandLayoutAnimator : MonoBehaviour
         // Animate each card to its final position, one by one, from dealFromTransform
         for (int i = 0; i < cards.Count; i++)
         {
+            // Skip null or destroyed cards
+            if (cards[i] == null) continue;
+            
             Transform card = cards[i];
+            if (card == null || !card.gameObject) continue; // Skip if card or its gameObject is null
+            
             card.gameObject.SetActive(true); // Reveal card just before animating
             if (isUI)
             {
                 RectTransform rt = card.GetComponent<RectTransform>();
+                if (rt == null) continue; // Skip if RectTransform is null
+                
                 Vector2 startPos = rt.anchoredPosition;
                 Debug.Log($"[AnimateCardsInSequence] Animating {card.name}: start {startPos} -> target {finalAnchoredPositions[i]}");
                 if (dealFromTransform != null)
@@ -180,8 +202,18 @@ public class HandLayoutAnimator : MonoBehaviour
                         rt.anchoredPosition = localDealFromPos;
                     }
                 }
-                yield return StartCoroutine(MoveToPositionFan(card, finalAnchoredPositions[i], 0f));
-                Debug.Log($"[AnimateCardsInSequence] Finished animating {card.name} to {finalAnchoredPositions[i]}");
+                
+                // Make sure the card still exists before starting the coroutine
+                if (card != null && card.gameObject != null)
+                {
+                    yield return StartCoroutine(MoveToPositionFan(card, finalAnchoredPositions[i], 0f));
+                    
+                    // Check again after coroutine completes
+                    if (card != null && card.gameObject != null)
+                    {
+                        Debug.Log($"[AnimateCardsInSequence] Finished animating {card.name} to {finalAnchoredPositions[i]}");
+                    }
+                }
             }
             else
             {
@@ -202,6 +234,12 @@ public class HandLayoutAnimator : MonoBehaviour
     // Overload for UI: target is Vector2 anchoredPosition
     IEnumerator MoveToPositionFan(Transform card, Vector2 targetAnchoredPos, float targetRot)
     {
+        // Check if card is null or destroyed
+        if (card == null || !card.gameObject)
+        {
+            yield break;
+        }
+        
         Quaternion startRot = card.rotation;
         Quaternion endRot = Quaternion.Euler(0, 0, targetRot);
         RectTransform rt = card.GetComponent<RectTransform>();
@@ -210,9 +248,16 @@ public class HandLayoutAnimator : MonoBehaviour
         {
             Vector2 startPos = rt.anchoredPosition;
             float t = 0f;
-            while (t < 1f || Quaternion.Angle(card.rotation, endRot) > 0.5f)
+            while ((t < 1f || Quaternion.Angle(card.rotation, endRot) > 0.5f) && card != null && card.gameObject != null)
             {
                 t += Time.deltaTime * animationSpeed;
+                
+                // Check if card is still valid before updating
+                if (card == null || !card.gameObject || rt == null)
+                {
+                    yield break;
+                }
+                
                 rt.anchoredPosition = Vector2.Lerp(startPos, targetAnchoredPos, t);
                 card.rotation = Quaternion.Lerp(card.rotation, endRot, Time.deltaTime * animationSpeed);
                 yield return null;
@@ -311,7 +356,7 @@ public class HandLayoutAnimator : MonoBehaviour
     }
 
     // Only animate the pop effect for the current hand, do not re-deal or animate from dealFromTransform
-    private IEnumerator AnimatePopEffectOnly()
+    public IEnumerator AnimatePopEffectOnly()
     {
         // Gather all UI hand cards and their selectors
         List<RectTransform> cardRects = new List<RectTransform>();

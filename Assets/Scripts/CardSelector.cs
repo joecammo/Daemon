@@ -1,6 +1,8 @@
 using System.Collections;
+using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.EventSystems;
+using UnityEngine.UI;
 
 // Note: For IPointerClickHandler to work with 2D objects, you need an EventSystem in your scene and a Physics2DRaycaster on your camera.
 public class CardSelector : MonoBehaviour, IPointerDownHandler, IBeginDragHandler, IDragHandler, IEndDragHandler, IPointerClickHandler
@@ -25,14 +27,13 @@ public class CardSelector : MonoBehaviour, IPointerDownHandler, IBeginDragHandle
     private Vector3 dragOffset;
     private Camera mainCamera;
 
-    // Action area logic
-    [Header("Action Area Mechanics")]
-    public float actionAreaScale = 0.7f;
+    // Target highlighting and card mechanics
+    [Header("Card Play Mechanics")]
     public float scaleSpeed = 10f;
-    private bool inActionArea = false;
     private Vector3 desiredScale;
-    private Collider2D actionAreaCollider;
-    private Enemy hoveredEnemy = null;
+    private GameObject highlightedTarget = null;
+    private Material originalMaterial = null;
+    private Material highlightMaterial = null;
 
 
     void Awake()
@@ -47,10 +48,13 @@ public class CardSelector : MonoBehaviour, IPointerDownHandler, IBeginDragHandle
         originalRotation = transform.rotation;
         handLayout = FindObjectOfType<HandLayoutAnimator>();
         desiredScale = originalScale;
-
-        GameObject actionArea = GameObject.FindGameObjectWithTag("Action");
-        if (actionArea != null)
-            actionAreaCollider = actionArea.GetComponent<Collider2D>();
+        
+        // Create highlight material for targets
+        highlightMaterial = new Material(Shader.Find("Sprites/Default"));
+        if (highlightMaterial != null)
+        {
+            highlightMaterial.color = Color.red;
+        }
     }
 
     void Update()
@@ -159,44 +163,76 @@ public void OnDrag(PointerEventData eventData)
     if (!isDragging) return;
     transform.position = GetPointerWorldPosition(eventData) + dragOffset;
 
-    // --- SkillDrop area detection (for Skill cards) ---
-    if (actionAreaCollider != null)
+    // Find any valid target under the card (Enemy or Friendly)
+    GameObject targetUnderPointer = null;
+    
+    // Use EventSystem to find UI objects under pointer
+    List<RaycastResult> results = new List<RaycastResult>();
+    EventSystem.current.RaycastAll(eventData, results);
+    
+    foreach (var result in results)
     {
-        bool nowInAction = actionAreaCollider.OverlapPoint(transform.position);
-        if (nowInAction != inActionArea)
+        if (result.gameObject != gameObject && 
+            (result.gameObject.CompareTag("Enemy") || result.gameObject.CompareTag("Friendly")))
         {
-            inActionArea = nowInAction;
-            desiredScale = inActionArea ? originalScale * actionAreaScale : originalScale;
+            targetUnderPointer = result.gameObject;
+            break;
         }
     }
-
-    // --- Attack card targeting ---
-    if (cardType == CardType.Attack)
+    
+    // Also check for 2D colliders (non-UI objects)
+    if (targetUnderPointer == null)
     {
-        Enemy enemyUnderPointer = null;
         Collider2D[] hits = Physics2D.OverlapPointAll(transform.position);
         foreach (var hit in hits)
         {
-            if (hit.CompareTag("Enemy"))
+            if (hit.gameObject != gameObject && 
+                (hit.CompareTag("Enemy") || hit.CompareTag("Friendly")))
             {
-                enemyUnderPointer = hit.GetComponent<Enemy>();
+                targetUnderPointer = hit.gameObject;
                 break;
             }
         }
-        if (hoveredEnemy != enemyUnderPointer)
-        {
-            if (hoveredEnemy != null) hoveredEnemy.Highlight(false);
-            hoveredEnemy = enemyUnderPointer;
-            if (hoveredEnemy != null) hoveredEnemy.Highlight(true);
-        }
     }
-    else
+    
+    // Handle target highlighting
+    if (highlightedTarget != targetUnderPointer)
     {
-        // Not an attack card, ensure no enemy is highlighted
-        if (hoveredEnemy != null)
+        // Remove highlight from previous target
+        if (highlightedTarget != null)
         {
-            hoveredEnemy.Highlight(false);
-            hoveredEnemy = null;
+            Renderer renderer = highlightedTarget.GetComponent<Renderer>();
+            if (renderer != null && originalMaterial != null)
+            {
+                renderer.material = originalMaterial;
+            }
+            
+            // Also check for UI Image
+            UnityEngine.UI.Image image = highlightedTarget.GetComponent<UnityEngine.UI.Image>();
+            if (image != null)
+            {
+                image.color = Color.white; // Reset to default color
+            }
+        }
+        
+        // Apply highlight to new target
+        highlightedTarget = targetUnderPointer;
+        
+        if (highlightedTarget != null)
+        {
+            Renderer renderer = highlightedTarget.GetComponent<Renderer>();
+            if (renderer != null)
+            {
+                originalMaterial = renderer.material;
+                renderer.material = highlightMaterial;
+            }
+            
+            // Also handle UI Image
+            UnityEngine.UI.Image image = highlightedTarget.GetComponent<UnityEngine.UI.Image>();
+            if (image != null)
+            {
+                image.color = Color.red; // Highlight color
+            }
         }
     }
 }
@@ -210,47 +246,72 @@ public void OnEndDrag(PointerEventData eventData)
     var sr = GetComponent<SpriteRenderer>();
     if (sr) sr.sortingOrder = defaultSortingOrder;
 
-    // --- SkillDrop logic ---
-    if (inActionArea && cardType == CardType.Skill)
+    // Clear any highlighting
+    if (highlightedTarget != null)
     {
-        // For now, destroy card (later: send to discard)
-        Destroy(gameObject);
-        return;
-    }
-
-    // --- Attack card drop logic ---
-    if (cardType == CardType.Attack)
-    {
-        if (hoveredEnemy != null)
+        // Remove highlight from target
+        Renderer renderer = highlightedTarget.GetComponent<Renderer>();
+        if (renderer != null && originalMaterial != null)
         {
-            hoveredEnemy.TakeDamage(1); // Stub: deal 1 damage
-            hoveredEnemy.Highlight(false);
-            hoveredEnemy = null;
+            renderer.material = originalMaterial;
+        }
+        
+        // Also check for UI Image
+        UnityEngine.UI.Image image = highlightedTarget.GetComponent<UnityEngine.UI.Image>();
+        if (image != null)
+        {
+            image.color = Color.white; // Reset to default color
+        }
+        
+        // If dropped on a valid target (Enemy or Friendly), remove the card
+        if (highlightedTarget.CompareTag("Enemy") || highlightedTarget.CompareTag("Friendly"))
+        {
+            Debug.Log($"Card '{gameObject.name}' played on {highlightedTarget.name}");
+            
+            // Store reference to hand layout before destroying this card
+            HandLayoutAnimator layoutRef = handLayout;
+            
+            // Destroy the card
             Destroy(gameObject);
+            
+            // Re-layout the remaining cards in hand using AnimatePopEffectOnly instead of LayoutCards
+            // This prevents the entire hand from disappearing and being re-dealt
+            if (layoutRef != null)
+            {
+                layoutRef.StartCoroutine(layoutRef.AnimatePopEffectOnly());
+            }
+            
+            // Clear reference and return early
+            highlightedTarget = null;
             return;
         }
-        else
-        {
-            Debug.Log($"Attack card '{gameObject.name}' not released over enemy. Returning to hand.");
-        }
+        
+        // Clear reference
+        highlightedTarget = null;
     }
 
-    // Cleanup highlight if needed
-    if (hoveredEnemy != null)
+    // Card wasn't dropped on a valid target, animate it back to hand
+    Debug.Log($"Card '{gameObject.name}' not played on valid target. Returning to hand.");
+    
+    // Always reset popped state when returning to hand
+    isPopped = false;
+    desiredScale = originalScale;
+    
+    // Animate back to layout position and original rotation
+    if (popCoroutine != null) StopCoroutine(popCoroutine);
+    popCoroutine = StartCoroutine(AnimatePop(layoutPosition, layoutRotation, originalScale));
+    
+    // Make sure the card selector knows this card is no longer popped
+    if (handLayout != null && handLayout.currentlyPoppedCard == this)
     {
-        hoveredEnemy.Highlight(false);
-        hoveredEnemy = null;
+        handLayout.currentlyPoppedCard = null;
     }
-
-    // If the card is still popped after dragging, reset it to hand layout
-    if (isPopped)
+    
+    // Re-layout the hand to ensure all cards are in correct positions
+    // Use AnimatePopEffectOnly instead of LayoutCards to avoid full re-deal animation
+    if (handLayout != null)
     {
-        ResetPop();
-    }
-    else
-    {
-        // Return to original scale if not popped
-        desiredScale = originalScale;
+        handLayout.StartCoroutine(handLayout.AnimatePopEffectOnly());
     }
 }
 
