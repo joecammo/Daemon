@@ -94,18 +94,12 @@ public class CardSelector : MonoBehaviour, IPointerDownHandler, IBeginDragHandle
         }
     }
 
-    public void PopOut(Vector3 popOffset, float popScale)
+    public void PopOut(float popScale)
     {
         if (isPopped) return;
         isPopped = true;
-        // Animate to popped position and vertical rotation
-        if (popCoroutine != null) StopCoroutine(popCoroutine);
-        popCoroutine = StartCoroutine(AnimatePop(layoutPosition + Vector3.up * popOffset.y, Quaternion.identity, originalScale * popScale));
-        // Bring to front
-        transform.SetAsLastSibling();
-        // Set sorting order high so this card is visually on top
-        var sr = GetComponent<SpriteRenderer>();
-        if (sr) sr.sortingOrder = 100; // Pop to top
+        // Only set scale, let HandLayoutAnimator handle position
+        desiredScale = originalScale * popScale;
     }
 
     public void ResetPop()

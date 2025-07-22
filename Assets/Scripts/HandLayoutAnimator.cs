@@ -106,6 +106,53 @@ public class HandLayoutAnimator : MonoBehaviour
                     card.position = dealFromTransform.position;
             }
         }
+        // Animate to new positions
+        float t = 0f;
+        float duration = 0.2f;
+        // Capture starting positions
+        Vector2[] startAnchored = new Vector2[cards.Count];
+        Vector3[] startWorld = new Vector3[cards.Count];
+        for (int i = 0; i < cards.Count; i++)
+        {
+            if (isUI)
+                startAnchored[i] = cards[i].GetComponent<RectTransform>().anchoredPosition;
+            else
+                startWorld[i] = cards[i].position;
+        }
+        while (t < duration)
+        {
+            t += Time.deltaTime;
+            float lerp = Mathf.Clamp01(t / duration);
+            for (int i = 0; i < cards.Count; i++)
+            {
+                bool isPopped = (currentlyPoppedCard != null && cards[i].GetComponent<CardSelector>() == currentlyPoppedCard);
+                Vector2 targetPos = finalAnchoredPositions[i];
+                Vector3 targetScale = Vector3.one;
+                if (isPopped)
+                {
+                    targetPos.y += popYOffset;
+                    targetScale = Vector3.one * popScaleMultiplier;
+                }
+                if (isUI)
+                {
+                    var rt = cards[i].GetComponent<RectTransform>();
+                    if (rt != null)
+                    {
+                        rt.anchoredPosition = Vector2.Lerp(startAnchored[i], targetPos, lerp);
+                        rt.localScale = Vector3.Lerp(rt.localScale, targetScale, lerp);
+                    }
+                }
+                else
+                {
+                    Vector3 worldTarget = finalWorldPositions[i];
+                    if (isPopped)
+                        worldTarget.y += popYOffset;
+                    cards[i].position = Vector3.Lerp(startWorld[i], worldTarget, lerp);
+                    cards[i].localScale = Vector3.Lerp(cards[i].localScale, targetScale, lerp);
+                }
+            }
+            yield return null;
+        }
         // Animate each card to its final position, one by one, from dealFromTransform
         for (int i = 0; i < cards.Count; i++)
         {
@@ -259,8 +306,64 @@ public class HandLayoutAnimator : MonoBehaviour
             currentlyPoppedCard.ResetPop();
         }
         currentlyPoppedCard = card;
-        Vector3 popOffset = new Vector3(0, popYOffset, 0);
-        card.PopOut(popOffset, popScaleMultiplier);
+        card.PopOut(popScaleMultiplier);
+        StartCoroutine(AnimatePopEffectOnly()); // Only animate pop effect, not full deal
+    }
+
+    // Only animate the pop effect for the current hand, do not re-deal or animate from dealFromTransform
+    private IEnumerator AnimatePopEffectOnly()
+    {
+        // Only support UI (RectTransform) cards for this version
+        List<RectTransform> cardRects = new List<RectTransform>();
+        for (int i = 0; i < cardParent.childCount; i++)
+        {
+            RectTransform rt = cardParent.GetChild(i).GetComponent<RectTransform>();
+            if (rt != null && cardParent.GetChild(i).GetComponent<CardDisplay>() != null)
+                cardRects.Add(rt);
+        }
+        int cardCount = cardRects.Count;
+        if (cardCount == 0) yield break;
+
+        // Calculate logical slot X positions (evenly spaced, centered)
+        RectTransform parentRect = cardParent.GetComponent<RectTransform>();
+        float width = parentRect != null ? parentRect.rect.width : zoneWidth;
+        float usedSpacing = cardCount > 1 ? Mathf.Min(spacing, width / (cardCount - 1)) : 0f;
+        float totalWidth = usedSpacing * (cardCount - 1);
+        float xStart = -totalWidth / 2f;
+
+        // Capture starting positions
+        Vector2[] startAnchored = new Vector2[cardCount];
+        for (int i = 0; i < cardCount; i++)
+            startAnchored[i] = cardRects[i].anchoredPosition;
+
+        // Calculate target positions
+        Vector2[] targetAnchored = new Vector2[cardCount];
+        for (int i = 0; i < cardCount; i++)
+        {
+            float x = xStart + i * usedSpacing;
+            float y = 0f;
+            bool isPopped = (currentlyPoppedCard != null && cardRects[i].GetComponent<CardSelector>() == currentlyPoppedCard);
+            if (isPopped)
+                y += popYOffset;
+            targetAnchored[i] = new Vector2(x, y);
+        }
+
+        // Animate
+        float t = 0f;
+        float duration = 0.2f;
+        while (t < duration)
+        {
+            t += Time.deltaTime;
+            float lerp = Mathf.Clamp01(t / duration);
+            for (int i = 0; i < cardCount; i++)
+            {
+                cardRects[i].anchoredPosition = Vector2.Lerp(startAnchored[i], targetAnchored[i], lerp);
+            }
+            yield return null;
+        }
+        // Snap to final
+        for (int i = 0; i < cardCount; i++)
+            cardRects[i].anchoredPosition = targetAnchored[i];
     }
 
     // Called when a card starts being dragged
@@ -270,13 +373,13 @@ public class HandLayoutAnimator : MonoBehaviour
         {
             currentlyPoppedCard.ResetPop();
             currentlyPoppedCard = null;
+            StartCoroutine(AnimatePopEffectOnly());
         }
     }
 
     // Helper method to extract the card number from its name
-    int ExtractCardNumber(string cardName)
+    private int ExtractCardNumber(string cardName)
     {
-        // Assumes card names are like "Card_1_White", "Card_10_Orange", etc.
         int num = 0;
         var parts = cardName.Split('_');
         if (parts.Length > 1)
