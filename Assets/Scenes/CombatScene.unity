@@ -649,7 +649,7 @@ Canvas:
   m_Enabled: 1
   serializedVersion: 3
   m_RenderMode: 2
-  m_Camera: {fileID: 0}
+  m_Camera: {fileID: 519420031}
   m_PlaneDistance: 100
   m_PixelPerfect: 0
   m_ReceivesEvents: 1
@@ -660,7 +660,7 @@ Canvas:
   m_AdditionalShaderChannelsFlag: 25
   m_UpdateRectTransformForStandalone: 0
   m_SortingLayerID: 0
-  m_SortingOrder: 0
+  m_SortingOrder: 1
   m_TargetDisplay: 0
 --- !u!224 &242390119
 RectTransform:
@@ -937,7 +937,7 @@ SpriteRenderer:
   m_LightmapParameters: {fileID: 0}
   m_SortingLayerID: 0
   m_SortingLayer: 0
-  m_SortingOrder: 0
+  m_SortingOrder: 1
   m_Sprite: {fileID: 2189510010676529607, guid: a30a7e2c58f274e29accdc1d94390c7b, type: 3}
   m_Color: {r: 1, g: 1, b: 1, a: 1}
   m_FlipX: 0
@@ -1488,7 +1488,7 @@ SpriteRenderer:
   m_LightmapParameters: {fileID: 0}
   m_SortingLayerID: 0
   m_SortingLayer: 0
-  m_SortingOrder: 0
+  m_SortingOrder: 1
   m_Sprite: {fileID: -9197071915800250924, guid: 61464445b58994fba854f9de3a73c672, type: 3}
   m_Color: {r: 1, g: 1, b: 1, a: 1}
   m_FlipX: 0
@@ -1948,7 +1948,7 @@ GameObject:
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
   m_StaticEditorFlags: 0
-  m_IsActive: 1
+  m_IsActive: 0
 --- !u!61 &918318137
 BoxCollider2D:
   m_ObjectHideFlags: 0
@@ -2059,7 +2059,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 90ebb030d10ea4ac684cc0793adb7043, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  popYOffset: 1.5
+  popYOffset: 100
   popScaleMultiplier: 1.2
   cardParent: {fileID: 1012015640}
   spacing: 100
@@ -4056,6 +4056,18 @@ PrefabInstance:
     serializedVersion: 3
     m_TransformParent: {fileID: 242390119}
     m_Modifications:
+    - target: {fileID: 810871552295157283, guid: 684a7e8f2387c4919a25634fe7ccf414, type: 3}
+      propertyPath: m_margin.w
+      value: -14.7274475
+      objectReference: {fileID: 0}
+    - target: {fileID: 810871552295157283, guid: 684a7e8f2387c4919a25634fe7ccf414, type: 3}
+      propertyPath: m_margin.x
+      value: 29.847412
+      objectReference: {fileID: 0}
+    - target: {fileID: 810871552295157283, guid: 684a7e8f2387c4919a25634fe7ccf414, type: 3}
+      propertyPath: m_margin.z
+      value: 0.98150635
+      objectReference: {fileID: 0}
     - target: {fileID: 3232048745871641715, guid: 684a7e8f2387c4919a25634fe7ccf414, type: 3}
       propertyPath: m_Name
       value: Card

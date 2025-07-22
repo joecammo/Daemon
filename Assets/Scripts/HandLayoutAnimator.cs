@@ -313,16 +313,41 @@ public class HandLayoutAnimator : MonoBehaviour
     // Only animate the pop effect for the current hand, do not re-deal or animate from dealFromTransform
     private IEnumerator AnimatePopEffectOnly()
     {
-        // Only support UI (RectTransform) cards for this version
+        // Gather all UI hand cards and their selectors
         List<RectTransform> cardRects = new List<RectTransform>();
+        List<CardSelector> selectors = new List<CardSelector>();
         for (int i = 0; i < cardParent.childCount; i++)
         {
-            RectTransform rt = cardParent.GetChild(i).GetComponent<RectTransform>();
-            if (rt != null && cardParent.GetChild(i).GetComponent<CardDisplay>() != null)
+            var child = cardParent.GetChild(i);
+            RectTransform rt = child.GetComponent<RectTransform>();
+            CardDisplay display = child.GetComponent<CardDisplay>();
+            CardSelector selector = child.GetComponent<CardSelector>();
+            if (rt != null && display != null && selector != null)
+            {
                 cardRects.Add(rt);
+                selectors.Add(selector);
+            }
         }
         int cardCount = cardRects.Count;
         if (cardCount == 0) yield break;
+
+        // Sort by card number (hand order)
+        for (int i = 0; i < cardCount - 1; i++)
+        {
+            for (int j = i + 1; j < cardCount; j++)
+            {
+                if (ExtractCardNumber(cardRects[j].gameObject.name) < ExtractCardNumber(cardRects[i].gameObject.name))
+                {
+                    // Swap
+                    var tempRt = cardRects[i];
+                    cardRects[i] = cardRects[j];
+                    cardRects[j] = tempRt;
+                    var tempSel = selectors[i];
+                    selectors[i] = selectors[j];
+                    selectors[j] = tempSel;
+                }
+            }
+        }
 
         // Calculate logical slot X positions (evenly spaced, centered)
         RectTransform parentRect = cardParent.GetComponent<RectTransform>();
@@ -342,7 +367,7 @@ public class HandLayoutAnimator : MonoBehaviour
         {
             float x = xStart + i * usedSpacing;
             float y = 0f;
-            bool isPopped = (currentlyPoppedCard != null && cardRects[i].GetComponent<CardSelector>() == currentlyPoppedCard);
+            bool isPopped = (currentlyPoppedCard != null && selectors[i] == currentlyPoppedCard);
             if (isPopped)
                 y += popYOffset;
             targetAnchored[i] = new Vector2(x, y);
@@ -378,8 +403,9 @@ public class HandLayoutAnimator : MonoBehaviour
     }
 
     // Helper method to extract the card number from its name
-    private int ExtractCardNumber(string cardName)
+    int ExtractCardNumber(string cardName)
     {
+        // Assumes card names are like "Card_1_White", "Card_10_Orange", etc.
         int num = 0;
         var parts = cardName.Split('_');
         if (parts.Length > 1)
@@ -389,3 +415,4 @@ public class HandLayoutAnimator : MonoBehaviour
         return num;
     }
 }
+
