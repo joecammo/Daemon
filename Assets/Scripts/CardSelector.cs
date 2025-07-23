@@ -15,12 +15,21 @@ public class CardSelector : MonoBehaviour, IPointerDownHandler, IBeginDragHandle
     private Quaternion layoutRotation;
     private Vector3 originalScale;
     private bool isPopped = false;
-    private Coroutine popCoroutine = null;
-    private Quaternion originalRotation;
-    [Header("Pop Animation")]
-    public float popAnimationSpeed = 10f;
+    
+    // Public properties to expose private fields for debugging
+    public Vector3 OriginalScale { get { return originalScale; } }
+    public bool IsPopped { get { return isPopped; } }
     private HandLayoutAnimator handLayout;
     private int defaultSortingOrder = 0;
+    private Coroutine popCoroutine = null;
+    private Quaternion originalRotation;
+    
+    [Header("Pop Animation")]
+    public float popAnimationSpeed = 10f;
+
+    // Card data
+    private string cardTypeText;
+    private int cardCost;
 
     // Drag-and-drop fields
     private bool isDragging = false;
@@ -35,31 +44,140 @@ public class CardSelector : MonoBehaviour, IPointerDownHandler, IBeginDragHandle
     private Material originalMaterial = null;
     private Material highlightMaterial = null;
 
+    private EnergyManager energyManager;
 
     void Awake()
     {
         mainCamera = Camera.main;
+        energyManager = FindFirstObjectByType<EnergyManager>();
+        
+        // CRITICAL DEBUG: Log scale in Awake
+        Debug.Log($"[CardSelector] {gameObject.name} AWAKE - Scale check: transform.localScale={transform.localScale}, RectTransform scale={GetComponent<RectTransform>()?.localScale}");
     }
 
     void Start()
     {
-        layoutPosition = transform.position;
-        originalScale = transform.localScale;
-        originalRotation = transform.rotation;
-        handLayout = FindObjectOfType<HandLayoutAnimator>();
-        desiredScale = originalScale;
+        // CRITICAL DEBUG: Log scale at the very start of CardSelector initialization
+        Debug.Log($"[CardSelector] {gameObject.name} START - INITIAL SCALE CHECK: transform.localScale={transform.localScale}, RectTransform scale={GetComponent<RectTransform>()?.localScale}");
         
-        // Create highlight material for targets
-        highlightMaterial = new Material(Shader.Find("Sprites/Default"));
-        if (highlightMaterial != null)
+        // CRITICAL FIX: Ensure transform scale is never zero
+        if (transform.localScale == Vector3.zero)
         {
-            highlightMaterial.color = Color.red;
+            Debug.LogWarning($"[CardSelector] {gameObject.name} START - transform.localScale is ZERO! Setting to Vector3.one");
+            transform.localScale = Vector3.one;
+        }
+        
+        // Store original scale and rotation for popping effect
+        originalScale = transform.localScale;
+        
+        // CRITICAL FIX: Ensure originalScale is never zero
+        if (originalScale == Vector3.zero || originalScale.magnitude < 0.01f)
+        {
+            Debug.LogWarning($"[CardSelector] {gameObject.name} START - originalScale is ZERO or very small! Setting to Vector3.one");
+            originalScale = Vector3.one;
+        }
+        
+        // Initialize desiredScale to originalScale to prevent scaling to zero
+        desiredScale = originalScale;
+        originalRotation = transform.rotation;
+        
+        // CRITICAL DEBUG: Log scale values after setting
+        Debug.Log($"[CardSelector] {gameObject.name} START - AFTER SETTING: originalScale={originalScale}, desiredScale={desiredScale}");
+
+        // Find HandLayoutAnimator in the scene that has our parent as its cardParent
+        if (transform.parent != null)
+        {
+            // Find all HandLayoutAnimators in the scene
+            HandLayoutAnimator[] layoutAnimators = FindObjectsByType<HandLayoutAnimator>(FindObjectsSortMode.None);
+            foreach (var layoutAnimator in layoutAnimators)
+            {
+                // Check if this HandLayoutAnimator's cardParent is our parent
+                if (layoutAnimator.cardParent == transform.parent)
+                {
+                    handLayout = layoutAnimator;
+                    Debug.Log("Found HandLayoutAnimator that references our parent as cardParent.");
+                    break;
+                }
+            }
+            
+            // If we still didn't find it, try to find any HandLayoutAnimator
+            if (handLayout == null)
+            {
+                Debug.LogWarning("No HandLayoutAnimator found with our parent as cardParent! Looking for any HandLayoutAnimator.");
+                handLayout = FindFirstObjectByType<HandLayoutAnimator>();
+                
+                if (handLayout == null)
+                {
+                    Debug.LogError("No HandLayoutAnimator found in scene! Card layout will not work.");
+                }
+                else
+                {
+                    Debug.LogWarning("Found HandLayoutAnimator but it doesn't reference our parent. Setting its cardParent to our parent.");
+                    handLayout.cardParent = transform.parent;
+                    
+                    // Trigger layout after setting cardParent with a delay
+                    // to ensure all cards have initialized
+                    StartCoroutine(DelayedLayoutTrigger());
+                }
+            }
+        }
+        else
+        {
+            Debug.LogError("Card has no parent transform! Card layout will not work.");
+            handLayout = FindFirstObjectByType<HandLayoutAnimator>();
+        }
+
+        // Get card data from CardDisplay
+        CardDisplay cardDisplay = GetComponent<CardDisplay>();
+        if (cardDisplay != null)
+        {
+            cardTypeText = cardDisplay.typeText?.text;
+            if (cardDisplay.costText != null && int.TryParse(cardDisplay.costText.text, out int cost))
+            {
+                cardCost = cost;
+            }
+            else
+            {
+                cardCost = 1; // Default cost if parsing fails
+                Debug.LogWarning("Could not parse card cost, defaulting to 1");
+            }
+        }
+        else
+        {
+            Debug.LogWarning("No CardDisplay component found on card!");
+            cardTypeText = "";
+            cardCost = 1;
         }
     }
 
     void Update()
     {
+        // CRITICAL DEBUG: Check if scale is zero before lerping
+        if (transform.localScale == Vector3.zero)
+        {
+            Debug.LogWarning($"[CardSelector] {gameObject.name} UPDATE - Scale is ZERO before lerp! desiredScale={desiredScale}, originalScale={originalScale}");
+            // Force scale to be non-zero
+            transform.localScale = Vector3.one;
+        }
+        
+        // CRITICAL DEBUG: Check if desiredScale is zero
+        if (desiredScale == Vector3.zero)
+        {
+            Debug.LogWarning($"[CardSelector] {gameObject.name} UPDATE - desiredScale is ZERO! Setting to originalScale={originalScale}");
+            // Force desiredScale to be non-zero
+            desiredScale = originalScale.magnitude > 0 ? originalScale : Vector3.one;
+        }
+        
+        // Smoothly interpolate scale
         transform.localScale = Vector3.Lerp(transform.localScale, desiredScale, Time.deltaTime * scaleSpeed);
+        
+        // CRITICAL DEBUG: Log scale after lerp if it's zero
+        if (transform.localScale.magnitude < 0.01f)
+        {
+            Debug.LogError($"[CardSelector] {gameObject.name} UPDATE - Scale is nearly ZERO after lerp! transform.localScale={transform.localScale}, desiredScale={desiredScale}");
+            // Emergency fix - force scale to be non-zero
+            transform.localScale = Vector3.one;
+        }
     }
 
     // Called by HandLayoutAnimator after layout animation
@@ -67,7 +185,15 @@ public class CardSelector : MonoBehaviour, IPointerDownHandler, IBeginDragHandle
     {
         layoutPosition = pos;
         layoutRotation = rot;
-        originalScale = transform.localScale;
+        
+        // Only update originalScale during initial setup to prevent accumulation
+        // After that, we want to preserve the true original scale
+        if (originalScale == Vector3.zero)
+        {
+            originalScale = transform.localScale;
+            desiredScale = originalScale; // Ensure desiredScale is initialized correctly
+        }
+        
         // Store the default sorting order
         var sr = GetComponent<SpriteRenderer>();
         if (sr != null)
@@ -102,21 +228,44 @@ public class CardSelector : MonoBehaviour, IPointerDownHandler, IBeginDragHandle
     {
         if (isPopped) return;
         isPopped = true;
-        // Only set scale, let HandLayoutAnimator handle position
+        
+        // Ensure we're using the correct original scale
+        if (originalScale == Vector3.zero)
+        {
+            originalScale = transform.localScale;
+            Debug.LogWarning($"Card {name} had zero originalScale in PopOut! Setting to current scale: {originalScale}");
+        }
+        
+        // Set desired scale based on original scale (not current scale)
         desiredScale = originalScale * popScale;
+        Debug.Log($"PopOut: {name} originalScale={originalScale}, desiredScale={desiredScale}");
     }
 
     public void ResetPop()
     {
         if (!isPopped) return;
         isPopped = false;
+        
+        // Ensure we have a valid original scale
+        if (originalScale == Vector3.zero)
+        {
+            Debug.LogWarning($"Card {name} had zero originalScale in ResetPop! Using Vector3.one as fallback.");
+            originalScale = Vector3.one;
+        }
+        
+        // Force reset scale to original immediately to prevent scale accumulation
+        transform.localScale = originalScale;
+        desiredScale = originalScale;
+        
+        Debug.Log($"ResetPop: {name} scale reset to originalScale={originalScale}");
+        
         // Animate back to layout position and original rotation
         if (popCoroutine != null) StopCoroutine(popCoroutine);
         popCoroutine = StartCoroutine(AnimatePop(layoutPosition, layoutRotation, originalScale));
+        
         // Reset sorting order
         var sr = GetComponent<SpriteRenderer>();
         if (sr) sr.sortingOrder = defaultSortingOrder; // Restore original order
-        desiredScale = originalScale;
     }
 
     IEnumerator AnimatePop(Vector3 targetPos, Quaternion targetRot, Vector3 targetScale)
@@ -125,6 +274,16 @@ public class CardSelector : MonoBehaviour, IPointerDownHandler, IBeginDragHandle
         Vector3 startPos = transform.position;
         Quaternion startRot = transform.rotation;
         Vector3 startScale = transform.localScale;
+        
+        // Ensure target scale is valid
+        if (targetScale == Vector3.zero)
+        {
+            Debug.LogError($"Card {name} AnimatePop received zero targetScale! Using originalScale instead.");
+            targetScale = originalScale != Vector3.zero ? originalScale : Vector3.one;
+        }
+        
+        Debug.Log($"AnimatePop: {name} animating from scale {startScale} to {targetScale}");
+        
         while (t < 1f)
         {
             t += Time.deltaTime * popAnimationSpeed;
@@ -133,9 +292,16 @@ public class CardSelector : MonoBehaviour, IPointerDownHandler, IBeginDragHandle
             transform.localScale = Vector3.Lerp(startScale, targetScale, t);
             yield return null;
         }
+        
+        // Ensure final values are exactly as specified
         transform.position = targetPos;
         transform.rotation = targetRot;
         transform.localScale = targetScale;
+        
+        // Make sure desiredScale matches our final scale to prevent further changes
+        desiredScale = targetScale;
+        
+        Debug.Log($"AnimatePop: {name} animation complete, final scale={transform.localScale}");
     }
 // EventSystem drag-and-drop handlers
 public void OnPointerDown(PointerEventData eventData)
@@ -263,27 +429,57 @@ public void OnEndDrag(PointerEventData eventData)
             image.color = Color.white; // Reset to default color
         }
         
-        // If dropped on a valid target (Enemy or Friendly), remove the card
-        if (highlightedTarget.CompareTag("Enemy") || highlightedTarget.CompareTag("Friendly"))
+        // Check if the card type is valid for the target type
+        bool isValidTargetForCardType = false;
+        
+        if (highlightedTarget.CompareTag("Enemy") && cardTypeText == "Attack")
         {
-            Debug.Log($"Card '{gameObject.name}' played on {highlightedTarget.name}");
+            isValidTargetForCardType = true;
+        }
+        else if (highlightedTarget.CompareTag("Friendly") && cardTypeText == "Skill")
+        {
+            isValidTargetForCardType = true;
+        }
+        
+        // If dropped on a valid target (Enemy for Attack cards or Friendly for Skill cards)
+        if (isValidTargetForCardType)
+        {
+            Debug.Log($"Card '{gameObject.name}' ({cardTypeText}) played on {highlightedTarget.name} with cost {cardCost}");
             
-            // Store reference to hand layout before destroying this card
-            HandLayoutAnimator layoutRef = handLayout;
-            
-            // Destroy the card
-            Destroy(gameObject);
-            
-            // Re-layout the remaining cards in hand using AnimatePopEffectOnly instead of LayoutCards
-            // This prevents the entire hand from disappearing and being re-dealt
-            if (layoutRef != null)
+            // Check if we have enough energy
+            if (EnergyManager.Instance != null && EnergyManager.Instance.CanSpendEnergy(cardCost))
             {
-                layoutRef.StartCoroutine(layoutRef.AnimatePopEffectOnly());
+                // Spend energy
+                EnergyManager.Instance.SpendEnergy(cardCost);
+                
+                // Store reference to hand layout and transform before destroying this card
+                HandLayoutAnimator layoutRef = handLayout;
+                Transform cardTransform = transform;
+                
+                // Tell the hand layout to remove this card and re-layout the remaining cards
+                // This must be done BEFORE destroying the card
+                if (layoutRef != null)
+                {
+                    layoutRef.RemoveCardAndReLayout(cardTransform);
+                }
+                
+                // Destroy the card
+                Destroy(gameObject);
+                
+                // Clear reference and return early
+                highlightedTarget = null;
+                return;
             }
-            
-            // Clear reference and return early
-            highlightedTarget = null;
-            return;
+            else
+            {
+                Debug.Log($"Not enough energy to play card! Required: {cardCost}");
+                // Not enough energy, return card to hand
+            }
+        }
+        else if (highlightedTarget.CompareTag("Enemy") || highlightedTarget.CompareTag("Friendly"))
+        {
+            Debug.Log($"Invalid target type for card type {cardTypeText}. Cannot play {cardTypeText} on {highlightedTarget.tag}");
+            // Invalid target type for card type, return card to hand
         }
         
         // Clear reference
@@ -297,24 +493,58 @@ public void OnEndDrag(PointerEventData eventData)
     isPopped = false;
     desiredScale = originalScale;
     
+    // Make sure the card selector knows this card is no longer popped
+    if (handLayout != null)
+    {
+        // If this was the popped card, clear it
+        if (handLayout.currentlyPoppedCard == this)
+        {
+            handLayout.currentlyPoppedCard = null;
+        }
+        
+        // Explicitly call ResetPop to ensure proper reset
+        ResetPop();
+    }
+    
+    // Ensure the transform is reset to normal scale immediately
+    transform.localScale = originalScale;
+    
     // Animate back to layout position and original rotation
     if (popCoroutine != null) StopCoroutine(popCoroutine);
     popCoroutine = StartCoroutine(AnimatePop(layoutPosition, layoutRotation, originalScale));
-    
-    // Make sure the card selector knows this card is no longer popped
-    if (handLayout != null && handLayout.currentlyPoppedCard == this)
-    {
-        handLayout.currentlyPoppedCard = null;
-    }
     
     // Re-layout the hand to ensure all cards are in correct positions
     // Use AnimatePopEffectOnly instead of LayoutCards to avoid full re-deal animation
     if (handLayout != null)
     {
+        // Force a pop effect animation to ensure all cards are properly positioned
         handLayout.StartCoroutine(handLayout.AnimatePopEffectOnly());
     }
 }
 
+private IEnumerator DelayedLayoutTrigger()
+{
+    // Wait for end of frame to ensure all cards are initialized
+    yield return new WaitForEndOfFrame();
+    
+    // Wait a bit more to be safe
+    yield return new WaitForSeconds(0.1f);
+    
+    Debug.Log($"Card {gameObject.name}: Triggering delayed layout");
+    if (handLayout != null)
+    {
+        // IMPORTANT: Do not trigger any layout or animation here
+        // This was causing cards to disappear by triggering a new animation
+        // before the previous one completed
+        Debug.Log($"Card {gameObject.name}: DelayedLayoutTrigger - NOT triggering any new animations to prevent disappearance");
+        
+        // Instead, just ensure this card is visible and has the correct scale
+        gameObject.SetActive(true);
+        transform.localScale = originalScale;
+    }
+}
+
+// Helper method to get the world position of the pointer
 Vector3 GetPointerWorldPosition(PointerEventData eventData)
 {
     Camera cam = mainCamera != null ? mainCamera : Camera.main;

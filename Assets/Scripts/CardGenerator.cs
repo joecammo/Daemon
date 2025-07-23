@@ -4,6 +4,7 @@ using UnityEngine;
 using UnityEngine.Networking;
 using System.Linq;
 using TMPro;
+using UnityEngine.UI; // For LayoutRebuilder
 
 public class CardGenerator : MonoBehaviour
 {
@@ -11,6 +12,7 @@ public class CardGenerator : MonoBehaviour
     public GameObject cardPrefab;
     public Transform pullDeckParent; // Assign the PullDeck GameObject here
     public Transform cardDropZoneParent; // Assign the CardDropZone GameObject here
+    public Transform cardCanvasParent; // Assign the CardCanvas GameObject here for UI cards
 
     [Header("Google Sheets CSV URLs")]
     public string abilitiesCsvUrl = "https://docs.google.com/spreadsheets/d/19-xHKD4eLu4m3hMph4hMttR52oEThk9O-pj12wp98_M/gviz/tq?tqx=out:csv&sheet=Abilities";
@@ -18,8 +20,55 @@ public class CardGenerator : MonoBehaviour
 
     private Dictionary<string, CardData> abilitiesDict = new Dictionary<string, CardData>();
 
+    void Awake()
+    {
+        // Ensure the prefab is not active in the scene
+        if (cardPrefab) 
+        {
+            // Find any instances of the Card prefab in the scene hierarchy and disable them
+            GameObject originalCardInScene = GameObject.Find("Card");
+            if (originalCardInScene != null)
+            {
+                Debug.Log("[CardGenerator] Found original Card prefab in scene - disabling it");
+                originalCardInScene.SetActive(false);
+                
+                // DO NOT set scale to zero - this causes issues with instantiated clones
+                // Just disable the GameObject instead
+                Debug.Log("[CardGenerator] Disabled original Card prefab in scene");
+            }
+            
+            // Also disable the prefab reference without changing its scale
+            cardPrefab.SetActive(false);
+            Debug.Log("[CardGenerator] Disabled card prefab reference without changing scale");
+        }
+        
+        // Start downloading and parsing the CSVs
+        StartCoroutine(DownloadAbilities());
+    }
+    
     void Start()
     {
+        // CRITICAL FIX: Reset the prefab's RectTransform scale and position
+        if (cardPrefab != null)
+        {
+            // Fix the prefab's transform
+            cardPrefab.transform.localScale = Vector3.one;
+            cardPrefab.transform.localPosition = new Vector3(0, 0, 0);
+            
+            // Fix the prefab's RectTransform
+            RectTransform rectTransform = cardPrefab.GetComponent<RectTransform>();
+            if (rectTransform != null)
+            {
+                rectTransform.localScale = Vector3.one;
+                rectTransform.anchoredPosition = Vector2.zero;
+                Debug.Log($"[CardGenerator] CRITICAL FIX: Reset prefab RectTransform scale to {rectTransform.localScale} and position to {rectTransform.anchoredPosition}");
+            }
+            
+            // Disable the prefab
+            cardPrefab.SetActive(false);
+            Debug.Log("[CardGenerator] Disabled card prefab in Start");
+        }
+        
         if (DaemonAffinityManager.Instance != null)
         {
             DaemonAffinityManager.Instance.LoadDaemonsAffinity(() =>
@@ -177,9 +226,94 @@ foreach (var entry in deckList)
 {
     var card = entry.card;
     string daemonName = entry.daemonName;
-    // Instantiate cards directly under CardDropZone (the hand)
-    var cardObj = Instantiate(cardPrefab, cardDropZoneParent);
+    // Re-enable the prefab before instantiation (it's disabled in Awake)
+    cardPrefab.SetActive(true);
+    
+    // CRITICAL FIX: Reset prefab scale and position to ensure clones start with correct values
+    cardPrefab.transform.localScale = Vector3.one;
+    cardPrefab.transform.localPosition = new Vector3(0, 0, 0);
+    
+    // Fix the prefab's RectTransform
+    RectTransform prefabRT = cardPrefab.GetComponent<RectTransform>();
+    if (prefabRT != null)
+    {
+        prefabRT.localScale = Vector3.one;
+        prefabRT.anchoredPosition = Vector2.zero;
+        Debug.Log($"[CardGenerator] Reset prefab RectTransform scale to {prefabRT.localScale} and position to {prefabRT.anchoredPosition} before instantiation");
+    }
+    
+    // SUPER CRITICAL DEBUG: Log prefab state right before instantiation
+    Debug.Log($"[CardGenerator] PREFAB STATE RIGHT BEFORE INSTANTIATION: active={cardPrefab.activeSelf}, transform.scale={cardPrefab.transform.localScale}, RectTransform.scale={cardPrefab.GetComponent<RectTransform>()?.localScale}, prefab.name={cardPrefab.name}");
+    
+    // Instantiate cards directly under CardCanvas for proper UI rendering
+    var cardObj = Instantiate(cardPrefab, cardCanvasParent != null ? cardCanvasParent : cardDropZoneParent);
+    
+    // SUPER CRITICAL DEBUG: Log clone state immediately after instantiation BEFORE any changes
+    Debug.Log($"[CardGenerator] CLONE STATE IMMEDIATELY AFTER INSTANTIATION (BEFORE CHANGES): active={cardObj.activeSelf}, transform.scale={cardObj.transform.localScale}, RectTransform.scale={cardObj.GetComponent<RectTransform>()?.localScale}, clone.name={cardObj.name}");
+    
+    // Disable the prefab again after instantiation WITHOUT changing its scale
+    cardPrefab.SetActive(false);
+    // DO NOT set scale to zero here - it causes issues with clones
+    
+    // Ensure the instantiated card is active and visible
+    cardObj.SetActive(true);
+    
+    // CRITICAL: Force scale to (1,1,1) immediately after instantiation
+    cardObj.transform.localScale = Vector3.one;
+    
+    // Force RectTransform scale to (1,1,1) as well
+    RectTransform cardRT = cardObj.GetComponent<RectTransform>();
+    if (cardRT != null)
+    {
+        cardRT.localScale = Vector3.one;
+        Debug.Log($"[CardGenerator] Explicitly set card {card.title} RectTransform scale to {cardRT.localScale}");
+    }
+    
+    Debug.Log($"[CardGenerator] Explicitly set card {card.title} transform scale to {cardObj.transform.localScale} immediately after instantiation");
+    
+    // Set a proper position in front of other cards
+    RectTransform rectTransform = cardObj.GetComponent<RectTransform>();
+    if (rectTransform != null)
+    {
+        // Reset RectTransform scale explicitly
+        rectTransform.localScale = Vector3.one;
+        Debug.Log($"[CardGenerator] Explicitly set RectTransform scale to {rectTransform.localScale}");
+        
+        // Reset any negative position values
+        rectTransform.anchoredPosition = new Vector2(50, 0);
+        
+        // Ensure card is visible in World Space by setting proper Z position
+        if (cardCanvasParent != null && cardCanvasParent.GetComponent<Canvas>()?.renderMode == RenderMode.WorldSpace)
+        {
+            // Position slightly in front of parent
+            Vector3 localPos = cardObj.transform.localPosition;
+            localPos.z = -0.01f * instantiatedCards.Count; // Each card slightly in front of previous (smaller offset)
+            cardObj.transform.localPosition = localPos;
+            Debug.Log($"[CardGenerator] Set card {card.title} Z position to {localPos.z} for World Space visibility");
+        }
+        else
+        {
+            // For UI cards, ensure Z is slightly positive to be visible
+            Vector3 localPos = cardObj.transform.localPosition;
+            localPos.z = 0;
+            cardObj.transform.localPosition = localPos;
+            Debug.Log($"[CardGenerator] Set card {card.title} Z position to {localPos.z} for UI visibility");
+        }
+        
+        // Force update the RectTransform
+        LayoutRebuilder.ForceRebuildLayoutImmediate(rectTransform);
+    }
+    
     instantiatedCards.Add(cardObj);
+    
+    // Debug card properties
+    Debug.Log($"[CardGenerator] Card {card.title} instantiated under {(cardCanvasParent != null ? "CardCanvas" : "CardDropZone")}");
+    Debug.Log($"[CardGenerator] Card {card.title} position: {cardObj.transform.position}, localPosition: {cardObj.transform.localPosition}, scale: {cardObj.transform.localScale}");
+    Debug.Log($"[CardGenerator] Card {card.title} RectTransform - anchoredPosition: {cardObj.GetComponent<RectTransform>().anchoredPosition}, sizeDelta: {cardObj.GetComponent<RectTransform>().sizeDelta}, pivot: {cardObj.GetComponent<RectTransform>().pivot}");
+    
+    // Check if card has required components
+    var image = cardObj.GetComponentInChildren<UnityEngine.UI.Image>();
+    Debug.Log($"[CardGenerator] Card {card.title} has Image component: {image != null}, Enabled: {image?.enabled}, Color: {image?.color}");
     Debug.Log($"[CardGenerator] Instantiated card: {card.title} for daemon {daemonName}");
     var display = cardObj.GetComponent<CardDisplay>();
     if (display)
@@ -208,11 +342,82 @@ foreach (var entry in deckList)
         var layout = cardDropZoneParent.GetComponent<HandLayoutAnimator>();
         if (layout != null)
         {
+            // Force all cards to be visible with correct scale before layout
+            foreach (var card in instantiatedCards)
+            {
+                if (card != null)
+                {
+                    card.transform.localScale = Vector3.one;
+                    card.SetActive(true);
+                    
+                    // Ensure RectTransform is properly scaled
+                    RectTransform rt = card.GetComponent<RectTransform>();
+                    if (rt != null)
+                    {
+                        rt.localScale = Vector3.one;
+                    }
+                    
+                    Debug.Log($"[CardGenerator] Pre-layout card scale: {card.transform.localScale}");
+                }
+            }
+            
+            // Now layout the cards
             layout.LayoutCards();
+            
+            // Log post-layout scales
+            StartCoroutine(LogPostLayoutScales(instantiatedCards));
         }
     }
 
-    
+    // Coroutine to log card scales after layout is complete
+    private IEnumerator LogPostLayoutScales(List<GameObject> cards)
+    {
+        // Wait for layout to complete
+        yield return new WaitForSeconds(0.5f);
+        
+        Debug.Log("[CardGenerator] Checking post-layout card scales:");
+        foreach (var card in cards)
+        {
+            if (card != null)
+            {
+                Debug.Log($"[CardGenerator] Post-layout card scale: {card.transform.localScale}, active: {card.activeSelf}");
+                
+                // Check RectTransform scale
+                RectTransform rt = card.GetComponent<RectTransform>();
+                if (rt != null)
+                {
+                    Debug.Log($"[CardGenerator] Post-layout RectTransform scale: {rt.localScale}, anchoredPosition: {rt.anchoredPosition}");
+                    
+                    // If scale is zero, force reset it
+                    if (rt.localScale == Vector3.zero)
+                    {
+                        rt.localScale = Vector3.one;
+                        Debug.Log($"[CardGenerator] FIXED zero scale on RectTransform");
+                    }
+                }
+                
+                // Check for any Canvas or CanvasGroup components that might affect visibility
+                Canvas canvas = card.GetComponentInChildren<Canvas>();
+                if (canvas != null)
+                {
+                    Debug.Log($"[CardGenerator] Card has Canvas: enabled={canvas.enabled}, sortingOrder={canvas.sortingOrder}");
+                }
+                
+                CanvasGroup canvasGroup = card.GetComponentInChildren<CanvasGroup>();
+                if (canvasGroup != null)
+                {
+                    Debug.Log($"[CardGenerator] Card has CanvasGroup: alpha={canvasGroup.alpha}, interactable={canvasGroup.interactable}, blocksRaycasts={canvasGroup.blocksRaycasts}");
+                    
+                    // Ensure CanvasGroup is not making the card invisible
+                    if (canvasGroup.alpha < 1.0f)
+                    {
+                        canvasGroup.alpha = 1.0f;
+                        Debug.Log("[CardGenerator] FIXED low alpha on CanvasGroup");
+                    }
+                }
+            }
+        }
+    }
 
     class DeckEntry
 {

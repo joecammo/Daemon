@@ -156,7 +156,7 @@ GameObject:
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
   m_StaticEditorFlags: 0
-  m_IsActive: 1
+  m_IsActive: 0
 --- !u!224 &6937677415583512858
 RectTransform:
   m_ObjectHideFlags: 0
@@ -295,7 +295,6 @@ MonoBehaviour:
   m_EditorClassIdentifier: 
   cardType: 0
   popAnimationSpeed: 10
-  actionAreaScale: 0.7
   scaleSpeed: 10
 --- !u!1 &4294043039176380342
 GameObject:
