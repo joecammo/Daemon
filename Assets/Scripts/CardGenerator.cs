@@ -22,7 +22,7 @@ public class CardGenerator : MonoBehaviour
 
     void Awake()
     {
-        // Ensure the prefab is not active in the scene
+        // CRITICAL FIX: Ensure the prefab is not active in the scene
         if (cardPrefab) 
         {
             // Find any instances of the Card prefab in the scene hierarchy and disable them
@@ -39,6 +39,18 @@ public class CardGenerator : MonoBehaviour
             
             // Also disable the prefab reference without changing its scale
             cardPrefab.SetActive(false);
+            
+            // Ensure it's really disabled by setting its parent's active state too if it has one
+            if (cardPrefab.transform.parent != null)
+            {
+                // Check if this is the prefab in the hierarchy (not the asset)
+                if (cardPrefab.transform.parent.gameObject.scene.isLoaded)
+                {
+                    Debug.Log("[CardGenerator] Found Card prefab in hierarchy - disabling its parent too");
+                    cardPrefab.transform.parent.gameObject.SetActive(false);
+                }
+            }
+            
             Debug.Log("[CardGenerator] Disabled card prefab reference without changing scale");
         }
         

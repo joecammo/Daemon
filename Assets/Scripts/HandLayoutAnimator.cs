@@ -61,6 +61,21 @@ public class HandLayoutAnimator : MonoBehaviour
     {
         yield return new WaitForSeconds(0.5f); // Increased delay to ensure all cards are initialized
         
+        // CRITICAL FIX: Ensure the original Card prefab is hidden
+        GameObject originalCard = GameObject.Find("Card");
+        if (originalCard != null && originalCard.name == "Card" && !originalCard.name.Contains("Clone"))
+        {
+            Debug.Log("[HandLayoutAnimator] Found original Card prefab - ensuring it stays hidden");
+            originalCard.SetActive(false);
+            
+            // Also hide its parent if it has one
+            if (originalCard.transform.parent != null)
+            {
+                Debug.Log($"[HandLayoutAnimator] Also hiding Card's parent: {originalCard.transform.parent.gameObject.name}");
+                originalCard.transform.parent.gameObject.SetActive(false);
+            }
+        }
+        
         // CRITICAL DEBUG: Check dealFromTransform for RectTransform
         if (dealFromTransform != null)
         {
@@ -74,6 +89,15 @@ public class HandLayoutAnimator : MonoBehaviour
             for (int i = 0; i < cardParent.childCount; i++)
             {
                 Transform child = cardParent.GetChild(i);
+                
+                // Skip the original Card prefab
+                if (child.name == "Card" && !child.name.Contains("Clone"))
+                {
+                    Debug.Log($"[HandLayoutAnimator] Skipping original Card prefab in layout");
+                    child.gameObject.SetActive(false);
+                    continue;
+                }
+                
                 RectTransform rt = child.GetComponent<RectTransform>();
                 Debug.Log($"[HandLayoutAnimator] Card {child.name} BEFORE LAYOUT: transform.scale={child.localScale}, RectTransform.scale={rt?.localScale}");
             }
@@ -89,6 +113,15 @@ public class HandLayoutAnimator : MonoBehaviour
             for (int i = 0; i < cardParent.childCount; i++)
             {
                 Transform child = cardParent.GetChild(i);
+                
+                // Skip the original Card prefab
+                if (child.name == "Card" && !child.name.Contains("Clone"))
+                {
+                    Debug.Log($"[HandLayoutAnimator] Keeping original Card prefab hidden after layout");
+                    child.gameObject.SetActive(false);
+                    continue;
+                }
+                
                 RectTransform rt = child.GetComponent<RectTransform>();
                 Debug.Log($"[HandLayoutAnimator] Card {child.name} AFTER LAYOUT: transform.scale={child.localScale}, RectTransform.scale={rt?.localScale}");
             }
@@ -107,6 +140,21 @@ public class HandLayoutAnimator : MonoBehaviour
         {
             Debug.LogError("AnimateCardsInSequence: cardParent is null! Cannot layout cards.");
             yield break;
+        }
+        
+        // CRITICAL FIX: Ensure the original Card prefab is hidden
+        GameObject originalCard = GameObject.Find("Card");
+        if (originalCard != null && originalCard.name == "Card" && !originalCard.name.Contains("Clone"))
+        {
+            Debug.Log("[HandLayoutAnimator] AnimateCardsInSequence: Found original Card prefab - ensuring it stays hidden");
+            originalCard.SetActive(false);
+            
+            // Also hide its parent if it has one
+            if (originalCard.transform.parent != null)
+            {
+                Debug.Log($"[HandLayoutAnimator] AnimateCardsInSequence: Also hiding Card's parent: {originalCard.transform.parent.gameObject.name}");
+                originalCard.transform.parent.gameObject.SetActive(false);
+            }
         }
         
         Debug.Log($"AnimateCardsInSequence: Starting layout with {cardParent.childCount} children in cardParent");
@@ -142,17 +190,42 @@ public class HandLayoutAnimator : MonoBehaviour
         List<Vector2> finalAnchoredPositions = new List<Vector2>();
         List<Vector3> finalWorldPositions = new List<Vector3>();
         Vector3 worldCenter = fanCenterOverride != null ? fanCenterOverride.position : transform.position;
+        
+        // Get card width for better spacing calculation
+        float cardWidth = 200f; // Default card width
+        if (cards.Count > 0 && cards[0].GetComponent<RectTransform>() != null)
+        {
+            cardWidth = cards[0].GetComponent<RectTransform>().rect.width;
+            Debug.Log($"Using actual card width: {cardWidth}");
+        }
+        
         if (cardCount == 1) {
+            // Single card is centered
             finalAnchoredPositions.Add(Vector2.zero);
             finalWorldPositions.Add(worldCenter);
         } else {
-            float usedSpacing = Mathf.Min(spacing, width / (cardCount - 1));
+            // Calculate spacing based on available width and card count
+            // Use more compact spacing to match the clicked state
+            float availableWidth = width - cardWidth; // Account for card width
+            float minSpacing = cardWidth * 0.25f; // Reduced minimum spacing for more compact layout
+            float maxSpacing = cardWidth * 0.5f; // Reduced maximum spacing for more compact layout
+            
+            // Calculate ideal spacing that fits all cards within the width
+            float idealSpacing = availableWidth / (cardCount - 1);
+            float usedSpacing = Mathf.Clamp(idealSpacing, minSpacing, maxSpacing);
+            
+            // Recalculate total width with the used spacing
             float totalWidth = usedSpacing * (cardCount - 1);
+            
+            // Center the entire group by starting at negative half of total width
             float xStart = -totalWidth / 2f;
+            Debug.Log($"Card layout: count={cardCount}, width={width}, cardWidth={cardWidth}, spacing={usedSpacing}, totalWidth={totalWidth}, xStart={xStart}");
+            
             for (int i = 0; i < cardCount; i++) {
                 float x = xStart + i * usedSpacing;
                 finalAnchoredPositions.Add(new Vector2(x, 0));
                 finalWorldPositions.Add(worldCenter + new Vector3(x, 0, 0));
+                Debug.Log($"Card {i} position: {x}");
             }
         }
         // PRE-PASS: Set all cards to deal-from position and hide them
@@ -713,7 +786,22 @@ public class HandLayoutAnimator : MonoBehaviour
         // Calculate logical slot X positions (evenly spaced, centered)
         RectTransform parentRect = cardParent.GetComponent<RectTransform>();
         float width = parentRect != null ? parentRect.rect.width : zoneWidth;
-        float usedSpacing = cardCount > 1 ? Mathf.Min(spacing, width / (cardCount - 1)) : 0f;
+        // Get card width for better spacing calculation
+        float cardWidth = 200f; // Default card width
+        if (cardCount > 0 && cardRects[0] != null)
+        {
+            cardWidth = cardRects[0].rect.width;
+            Debug.Log($"AnimatePopEffectOnly: Using actual card width: {cardWidth}");
+        }
+        
+        // Use more compact spacing to match the initial layout
+        float availableWidth = width - cardWidth; // Account for card width
+        float minSpacing = cardWidth * 0.25f; // Reduced minimum spacing for more compact layout
+        float maxSpacing = cardWidth * 0.5f; // Reduced maximum spacing for more compact layout
+        
+        // Calculate ideal spacing that fits all cards within the width
+        float idealSpacing = cardCount > 1 ? availableWidth / (cardCount - 1) : 0f;
+        float usedSpacing = Mathf.Clamp(idealSpacing, minSpacing, maxSpacing);
         float totalWidth = usedSpacing * (cardCount - 1);
         float xStart = -totalWidth / 2f;
 
