@@ -40,8 +40,28 @@ public class HandLayoutAnimator : MonoBehaviour
             if (dealFromTransform.GetComponent<RectTransform>() == null)
             {
                 Debug.LogWarning($"[HandLayoutAnimator] Start: Adding RectTransform to {dealFromTransform.name}");
+                
+                // CRITICAL FIX: Ensure the dealFromTransform GameObject is active before adding components
+                if (!dealFromTransform.gameObject.activeInHierarchy)
+                {
+                    Debug.LogWarning($"[HandLayoutAnimator] Start: {dealFromTransform.name} is inactive! Activating it before adding RectTransform.");
+                    dealFromTransform.gameObject.SetActive(true);
+                }
+                
                 dealFromTransform.gameObject.AddComponent<RectTransform>();
             }
+        }
+        
+        // CRITICAL FIX: Ensure this GameObject is active before attempting to run any coroutines
+        if (!gameObject.activeInHierarchy)
+        {
+            Debug.LogWarning($"[HandLayoutAnimator] Start: GameObject {gameObject.name} is inactive! Cannot run coroutines. Will layout cards directly.");
+            if (cardParent != null)
+            {
+                // Use non-coroutine approach immediately
+                LayoutCardsNonCoroutine();
+            }
+            return;
         }
         
         if (cardParent != null)
@@ -56,10 +76,25 @@ public class HandLayoutAnimator : MonoBehaviour
         }
     }
     
-    // Delay initial layout to ensure all cards are properly initialized
+    // Delayed layout to ensure all cards are initialized
     private IEnumerator DelayedInitialLayout()
     {
-        yield return new WaitForSeconds(0.5f); // Increased delay to ensure all cards are initialized
+        yield return new WaitForSeconds(0.1f);
+        
+        // CRITICAL FIX: Ensure this GameObject is active before proceeding
+        if (!gameObject.activeInHierarchy)
+        {
+            Debug.LogWarning("[HandLayoutAnimator] GameObject is inactive in DelayedInitialLayout! Attempting to activate it.");
+            gameObject.SetActive(true);
+            
+            // If still inactive (maybe parent is inactive), use non-coroutine approach
+            if (!gameObject.activeInHierarchy)
+            {
+                Debug.LogError("[HandLayoutAnimator] GameObject is STILL inactive after attempting to activate! Using non-coroutine approach.");
+                LayoutCardsNonCoroutine();
+                yield break;
+            }
+        }
         
         // CRITICAL FIX: Ensure the original Card prefab is hidden
         GameObject originalCard = GameObject.Find("Card");
@@ -86,16 +121,23 @@ public class HandLayoutAnimator : MonoBehaviour
         Debug.Log("[HandLayoutAnimator] CHECKING ALL CARD SCALES BEFORE LAYOUT");
         if (cardParent != null)
         {
+            // Ensure cardParent is active
+            if (!cardParent.gameObject.activeInHierarchy)
+            {
+                Debug.LogWarning("[HandLayoutAnimator] cardParent is inactive! Activating it.");
+                cardParent.gameObject.SetActive(true);
+            }
+            
             for (int i = 0; i < cardParent.childCount; i++)
             {
                 Transform child = cardParent.GetChild(i);
+                if (child == null) continue;
                 
-                // Skip the original Card prefab
-                if (child.name == "Card" && !child.name.Contains("Clone"))
+                // Ensure each card is active
+                if (!child.gameObject.activeInHierarchy)
                 {
-                    Debug.Log($"[HandLayoutAnimator] Skipping original Card prefab in layout");
-                    child.gameObject.SetActive(false);
-                    continue;
+                    Debug.LogWarning($"[HandLayoutAnimator] Card {child.name} is inactive! Activating it.");
+                    child.gameObject.SetActive(true);
                 }
                 
                 RectTransform rt = child.GetComponent<RectTransform>();
@@ -103,6 +145,7 @@ public class HandLayoutAnimator : MonoBehaviour
             }
         }
         
+        // Now we can safely call LayoutCards
         LayoutCards();
         
         // CRITICAL DEBUG: Log all card scales AFTER layout
@@ -130,7 +173,92 @@ public class HandLayoutAnimator : MonoBehaviour
 
     public void LayoutCards()
     {
+        // CRITICAL FIX: Ensure this GameObject is active before proceeding
+        if (!gameObject.activeInHierarchy)
+        {
+            Debug.LogWarning("[HandLayoutAnimator] GameObject is inactive in LayoutCards! Attempting to activate it.");
+            gameObject.SetActive(true);
+            
+            // If still inactive (maybe parent is inactive), use non-coroutine approach
+            if (!gameObject.activeInHierarchy)
+            {
+                Debug.LogError("[HandLayoutAnimator] GameObject is STILL inactive after attempting to activate! Using non-coroutine layout approach.");
+                // Call a non-coroutine version of the layout logic
+                LayoutCardsNonCoroutine();
+                return;
+            }
+        }
+        
+        // CRITICAL FIX: Ensure cardParent is active
+        if (cardParent != null && !cardParent.gameObject.activeInHierarchy)
+        {
+            Debug.LogWarning("[HandLayoutAnimator] cardParent is inactive in LayoutCards! Activating it.");
+            cardParent.gameObject.SetActive(true);
+        }
+        
+        // If we're here, the GameObject is active, so we can use the coroutine
         StartCoroutine(AnimateCardsInSequence());
+    }
+    
+    // Non-coroutine version of layout logic for when the GameObject is inactive
+    private void LayoutCardsNonCoroutine()
+    {
+        Debug.Log("[HandLayoutAnimator] Using non-coroutine layout approach");
+        
+        // Skip animation and just position cards directly
+        if (cardParent == null)
+        {
+            Debug.LogError("[HandLayoutAnimator] CardParent is null in LayoutCardsNonCoroutine!");
+            return;
+        }
+        
+        // Count valid cards
+        int cardCount = 0;
+        List<RectTransform> cardRects = new List<RectTransform>();
+        
+        for (int i = 0; i < cardParent.childCount; i++)
+        {
+            Transform child = cardParent.GetChild(i);
+            if (child == null) continue;
+            
+            RectTransform rt = child.GetComponent<RectTransform>();
+            CardDisplay display = child.GetComponent<CardDisplay>();
+            if (rt != null && display != null)
+            {
+                cardRects.Add(rt);
+                cardCount++;
+            }
+        }
+        
+        if (cardCount == 0) return;
+        
+        // Calculate positions (simplified version of what's in the coroutine)
+        RectTransform parentRect = cardParent.GetComponent<RectTransform>();
+        float width = parentRect != null ? parentRect.rect.width : zoneWidth;
+        float cardWidth = 200f; // Default card width
+        if (cardCount > 0 && cardRects[0] != null)
+        {
+            cardWidth = cardRects[0].rect.width;
+        }
+        
+        float availableWidth = width - cardWidth;
+        float spacing = cardCount > 1 ? availableWidth / (cardCount - 1) : 0f;
+        float xStart = -spacing * (cardCount - 1) / 2f;
+        
+        // Position cards directly
+        for (int i = 0; i < cardCount; i++)
+        {
+            if (cardRects[i] == null) continue;
+            
+            float xPos = xStart + i * spacing;
+            cardRects[i].anchoredPosition = new Vector2(xPos, 0);
+            cardRects[i].localScale = Vector3.one;
+            
+            // Ensure the card is visible
+            cardRects[i].gameObject.SetActive(true);
+        }
+        
+        Debug.Log($"[HandLayoutAnimator] Positioned {cardCount} cards using non-coroutine approach");
     }
 
     IEnumerator AnimateCardsInSequence()
@@ -152,8 +280,20 @@ public class HandLayoutAnimator : MonoBehaviour
             // Also hide its parent if it has one
             if (originalCard.transform.parent != null)
             {
-                Debug.Log($"[HandLayoutAnimator] AnimateCardsInSequence: Also hiding Card's parent: {originalCard.transform.parent.gameObject.name}");
-                originalCard.transform.parent.gameObject.SetActive(false);
+                string parentName = originalCard.transform.parent.gameObject.name;
+                
+                // CRITICAL FIX: Don't deactivate the parent if it's the CardCanvas
+                if (parentName.Contains("CardCanvas") || parentName.Contains("Canvas"))
+                {
+                    Debug.Log($"[HandLayoutAnimator] AnimateCardsInSequence: NOT hiding Card's parent: {parentName} as it appears to be the CardCanvas");
+                    // Instead, just hide the original card itself
+                    originalCard.SetActive(false);
+                }
+                else
+                {
+                    Debug.Log($"[HandLayoutAnimator] AnimateCardsInSequence: Hiding Card's parent: {parentName}");
+                    originalCard.transform.parent.gameObject.SetActive(false);
+                }
             }
         }
         
@@ -167,6 +307,11 @@ public class HandLayoutAnimator : MonoBehaviour
             if (child != null && child.GetComponent<CardDisplay>() != null) // Only animate real cards
             {
                 cards.Add(child);
+                // CRITICAL FIX: Ensure all cards are active before we start
+                if (!child.gameObject.activeSelf)
+                {
+                    child.gameObject.SetActive(true);
+                }
                 Debug.Log($"AnimateCardsInSequence: Added card {child.name} to layout list");
             }
         }
@@ -228,11 +373,13 @@ public class HandLayoutAnimator : MonoBehaviour
                 Debug.Log($"Card {i} position: {x}");
             }
         }
-        // PRE-PASS: Set all cards to deal-from position and hide them
+        // PRE-PASS: Set all cards to deal-from position but keep them visible
+        // CRITICAL FIX: Don't hide cards during animation to prevent disappearance
         for (int i = 0; i < cards.Count; i++)
         {
             Transform card = cards[i];
-            card.gameObject.SetActive(false); // Hide initially
+            // CRITICAL FIX: Keep cards visible throughout the animation
+            card.gameObject.SetActive(true);
             if (isUI)
             {
                 RectTransform rt = card.GetComponent<RectTransform>();
@@ -337,9 +484,16 @@ public class HandLayoutAnimator : MonoBehaviour
             if (cards[i] == null) continue;
             
             Transform card = cards[i];
+            
+            // CRITICAL FIX: Ensure the card is active before animating it
+            if (!card.gameObject.activeSelf)
+            {
+                card.gameObject.SetActive(true);
+                Debug.Log($"[AnimateCardsInSequence] Activated card {card.name} before animation");
+            }
             if (card == null || !card.gameObject) continue; // Skip if card or its gameObject is null
             
-            card.gameObject.SetActive(true); // Reveal card just before animating
+            // CRITICAL FIX: Card should already be active, but ensure it is
             if (isUI)
             {
                 RectTransform rt = card.GetComponent<RectTransform>();
@@ -400,40 +554,126 @@ public class HandLayoutAnimator : MonoBehaviour
             {
                 Debug.Log($"Card {child.name} final state: Active={child.gameObject.activeSelf}, Scale={child.localScale}, Position={child.position}");
                 
-                // Force cards to stay visible and maintain scale
-                child.gameObject.SetActive(true);
+                // CRITICAL FIX: Force cards to stay visible and maintain scale
+                if (!child.gameObject.activeSelf)
+                {
+                    Debug.LogWarning($"[CRITICAL FIX] Card {child.name} was inactive at end of animation! Activating it.");
+                    child.gameObject.SetActive(true);
+                }
+                
+                // Ensure scale is correct
+                if (child.localScale.x < 0.9f || child.localScale.y < 0.9f)
+                {
+                    Debug.LogWarning($"[CRITICAL FIX] Card {child.name} had incorrect scale {child.localScale}! Resetting to Vector3.one");
+                    child.localScale = Vector3.one;
+                }
                 
                 // Ensure CardSelector has correct original scale
                 CardSelector selector = child.GetComponent<CardSelector>();
                 if (selector != null)
                 {
                     Debug.Log($"Card {child.name} selector originalScale={selector.OriginalScale}, isPopped={selector.IsPopped}");
+                    
+                    // Ensure CardSelector has valid scale values
+                    if (selector.OriginalScale.x < 0.1f || selector.OriginalScale.y < 0.1f)
+                    {
+                        Debug.LogWarning($"[CRITICAL FIX] Card {child.name} selector had invalid originalScale {selector.OriginalScale}! Resetting to Vector3.one");
+                        selector.ForceResetScale(Vector3.one);
+                    }
                 }
             }
         }
         
         // Schedule another check after a short delay to see if something changes the cards
-        StartCoroutine(CheckCardStatesAfterDelay());
+        // Convert cards list to RectTransform list for the check
+        List<RectTransform> cardRects = new List<RectTransform>();
+        Vector3[] targetScales = new Vector3[cards.Count];
+        
+        for (int i = 0; i < cards.Count; i++)
+        {
+            if (cards[i] != null)
+            {
+                RectTransform rt = cards[i].GetComponent<RectTransform>();
+                if (rt != null)
+                {
+                    cardRects.Add(rt);
+                    // Store the target scale - use popScaleMultiplier for popped card, Vector3.one for others
+                    bool isPopped = (currentlyPoppedCard != null && cards[i].GetComponent<CardSelector>() == currentlyPoppedCard);
+                    targetScales[i] = isPopped ? Vector3.one * popScaleMultiplier : Vector3.one;
+                }
+            }
+        }
+        
+        StartCoroutine(CheckCardStatesAfterDelay(cardRects, targetScales, 0.5f));
         
         yield break;
     }
     
     // Check card states after a delay to catch any post-animation changes
-    IEnumerator CheckCardStatesAfterDelay()
+    private IEnumerator CheckCardStatesAfterDelay(List<RectTransform> cardRects, Vector3[] targetScales, float delayTime)
     {
-        yield return new WaitForSeconds(0.5f);
+        // Wait for a short delay
+        yield return new WaitForSeconds(delayTime);
         
-        Debug.Log("===== DELAYED CHECK - CARD STATES AFTER 0.5 SECONDS =====");
-        for (int i = 0; i < cardParent.childCount; i++)
+        Debug.Log("CheckCardStatesAfterDelay: Checking card states after animation");
+        
+        // First check the specific cards we animated
+        if (cardRects != null && cardRects.Count > 0)
         {
-            Transform child = cardParent.GetChild(i);
-            if (child != null)
+            for (int i = 0; i < cardRects.Count; i++)
             {
-                Debug.Log($"Card {child.name} delayed state: Active={child.gameObject.activeSelf}, Scale={child.localScale}, Position={child.position}");
+                if (cardRects[i] != null && cardRects[i].gameObject)
+                {
+                    // If card is inactive, reactivate it
+                    if (!cardRects[i].gameObject.activeSelf)
+                    {
+                        cardRects[i].gameObject.SetActive(true);
+                        Debug.Log($"CheckCardStatesAfterDelay: Re-activated card {cardRects[i].name}");
+                    }
+                    
+                    // If scale is zero or very small, reset it
+                    if (cardRects[i].localScale == Vector3.zero || cardRects[i].localScale.magnitude < 0.01f)
+                    {
+                        // Use target scale if available, otherwise use Vector3.one
+                        Vector3 correctScale = (targetScales != null && i < targetScales.Length) ? targetScales[i] : Vector3.one;
+                        cardRects[i].localScale = correctScale;
+                        Debug.Log($"CheckCardStatesAfterDelay: Fixed zero scale on card {cardRects[i].name}, set to {correctScale}");
+                    }
+                    
+                    // Log the current state
+                    Debug.Log($"CheckCardStatesAfterDelay: Card {cardRects[i].name} state: Active={cardRects[i].gameObject.activeSelf}, Scale={cardRects[i].localScale}, Position={cardRects[i].anchoredPosition}");
+                }
+            }
+        }
+        
+        // Also check all cards in the parent as a backup
+        if (cardParent != null)
+        {
+            for (int i = 0; i < cardParent.childCount; i++)
+            {
+                Transform child = cardParent.GetChild(i);
+                if (child != null)
+                {
+                    // If card is inactive, reactivate it
+                    if (!child.gameObject.activeSelf)
+                    {
+                        child.gameObject.SetActive(true);
+                        Debug.Log($"CheckCardStatesAfterDelay: Re-activated card {child.name} from parent check");
+                    }
+                    
+                    // If scale is zero or very small, reset it
+                    if (child.localScale == Vector3.zero || child.localScale.magnitude < 0.01f)
+                    {
+                        child.localScale = Vector3.one;
+                        Debug.Log($"CheckCardStatesAfterDelay: Fixed zero scale on card {child.name} from parent check");
+                    }
+                    
+                    Debug.Log($"CheckCardStatesAfterDelay: Card {child.name} parent check state: Active={child.gameObject.activeSelf}, Scale={child.localScale}, Position={child.position}");
+                }
             }
         }
     }
-
+    
     // Overload for UI: target is Vector2 anchoredPosition
     IEnumerator MoveToPositionFan(Transform card, Vector2 targetAnchoredPos, float targetRot)
     {
@@ -537,11 +777,29 @@ public class HandLayoutAnimator : MonoBehaviour
             // Fallback for sprites: use world position
             Vector3 startPos = card.position;
             
+            // CRITICAL FIX: Ensure the card is active before animating
+            if (!card.gameObject.activeSelf)
+            {
+                card.gameObject.SetActive(true);
+                Debug.Log($"[MoveToPositionFan] Activated non-UI card {card.name} before animation");
+            }
+            
             // Get the CardSelector component for scale reference
             CardSelector selectorNonUI = card.GetComponent<CardSelector>();
             
             // Get the original scale from CardSelector if available, otherwise use current scale
             Vector3 originalScaleNonUI = selectorNonUI != null ? selectorNonUI.OriginalScale : card.localScale;
+            
+            // Ensure we have a valid scale
+            if (originalScaleNonUI.x < 0.1f || originalScaleNonUI.y < 0.1f)
+            {
+                Debug.LogWarning($"[MoveToPositionFan] Non-UI card {card.name} had invalid originalScale {originalScaleNonUI}! Using Vector3.one");
+                originalScaleNonUI = Vector3.one;
+                if (selectorNonUI != null)
+                {
+                    selectorNonUI.ForceResetScale(Vector3.one);
+                }
+            }
             
             // Store the desired scale for this card
             Vector3 finalScaleNonUI = originalScaleNonUI;
@@ -700,11 +958,42 @@ public class HandLayoutAnimator : MonoBehaviour
         
         Debug.Log("AnimatePopEffectOnly: Starting pop effect animation");
         
+        // CRITICAL FIX: Ensure cardParent is active
+        if (!cardParent.gameObject.activeInHierarchy)
+        {
+            Debug.LogWarning("AnimatePopEffectOnly: CardParent is inactive! Activating it.");
+            cardParent.gameObject.SetActive(true);
+        }
+        
         // Gather all UI hand cards and their selectors
         List<RectTransform> cardRects = new List<RectTransform>();
         List<CardSelector> selectors = new List<CardSelector>();
         List<Vector3> originalScales = new List<Vector3>(); // Store original scales
         
+        // First pass: activate all cards and ensure they have proper scale
+        for (int i = 0; i < cardParent.childCount; i++)
+        {
+            if (i >= cardParent.childCount) break; // Safety check in case children count changes during iteration
+            
+            Transform child = cardParent.GetChild(i);
+            if (child == null) continue; // Skip null children
+            
+            // CRITICAL FIX: Force activate all cards first
+            if (!child.gameObject.activeSelf)
+            {
+                child.gameObject.SetActive(true);
+                Debug.Log($"AnimatePopEffectOnly: Pre-activated card {child.name}");
+            }
+            
+            // CRITICAL FIX: Ensure scale is never zero
+            if (child.localScale == Vector3.zero || child.localScale.magnitude < 0.01f)
+            {
+                child.localScale = Vector3.one;
+                Debug.Log($"AnimatePopEffectOnly: Fixed zero scale on card {child.name}");
+            }
+        }
+        
+        // Second pass: collect cards for animation
         for (int i = 0; i < cardParent.childCount; i++)
         {
             if (i >= cardParent.childCount) break; // Safety check in case children count changes during iteration
@@ -724,12 +1013,31 @@ public class HandLayoutAnimator : MonoBehaviour
                     Debug.Log($"AnimatePopEffectOnly: Activated previously inactive card {child.name}");
                 }
                 
+                // CRITICAL FIX: Force RectTransform scale to non-zero
+                if (rt.localScale == Vector3.zero || rt.localScale.magnitude < 0.01f)
+                {
+                    rt.localScale = Vector3.one;
+                    Debug.Log($"AnimatePopEffectOnly: Fixed zero RectTransform scale on card {child.name}");
+                }
+                
+                // CRITICAL FIX: Ensure CardSelector has proper originalScale
+                if (selector.OriginalScale == Vector3.zero || selector.OriginalScale.magnitude < 0.01f)
+                {
+                    selector.ForceResetScale(Vector3.one);
+                    Debug.Log($"AnimatePopEffectOnly: Fixed zero originalScale in CardSelector for {child.name}");
+                }
+                
                 cardRects.Add(rt);
                 selectors.Add(selector);
-                originalScales.Add(child.localScale); // Store original scale
-                Debug.Log($"AnimatePopEffectOnly: Added card {child.name} with scale {child.localScale}");
+                
+                // CRITICAL FIX: Use CardSelector.OriginalScale if available, otherwise use current scale
+                Vector3 safeOriginalScale = (selector.OriginalScale != Vector3.zero) ? selector.OriginalScale : Vector3.one;
+                originalScales.Add(safeOriginalScale);
+                
+                Debug.Log($"AnimatePopEffectOnly: Added card {child.name} with originalScale={safeOriginalScale}");
             }
         }
+        
         int cardCount = cardRects.Count;
         if (cardCount == 0)
         {
@@ -841,6 +1149,15 @@ public class HandLayoutAnimator : MonoBehaviour
             targetAnchored[i] = new Vector2(x, y);
         }
 
+        // CRITICAL FIX: Pre-set all cards to be active before animation
+        for (int i = 0; i < cardCount; i++)
+        {
+            if (cardRects[i] != null && cardRects[i].gameObject)
+            {
+                cardRects[i].gameObject.SetActive(true);
+            }
+        }
+
         // Animate
         float t = 0f;
         float duration = 0.2f;
@@ -858,6 +1175,7 @@ public class HandLayoutAnimator : MonoBehaviour
                 if (!cardRects[i].gameObject.activeSelf)
                 {
                     cardRects[i].gameObject.SetActive(true);
+                    Debug.Log($"AnimatePopEffectOnly: Re-activated card {cardRects[i].name} during animation");
                 }
                 
                 // Apply position animation
@@ -894,6 +1212,9 @@ public class HandLayoutAnimator : MonoBehaviour
             
             Debug.Log($"AnimatePopEffectOnly: Final position for {cardRects[i].name}: {targetAnchored[i]}, scale: {targetScales[i]}");
         }
+        
+        // CRITICAL FIX: Schedule a check after a delay to ensure cards remain visible
+        StartCoroutine(CheckCardStatesAfterDelay(cardRects, targetScales, 0.5f));
     }
 
     // Called when a card starts being dragged

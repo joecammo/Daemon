@@ -19,6 +19,15 @@ public class CardSelector : MonoBehaviour, IPointerDownHandler, IBeginDragHandle
     // Public properties to expose private fields for debugging
     public Vector3 OriginalScale { get { return originalScale; } }
     public bool IsPopped { get { return isPopped; } }
+    
+    // Method to force reset scale from outside the class
+    public void ForceResetScale(Vector3 newScale)
+    {
+        originalScale = newScale;
+        desiredScale = newScale;
+        transform.localScale = newScale;
+        Debug.Log($"[CardSelector] ForceResetScale called on {gameObject.name}: originalScale and desiredScale set to {newScale}");
+    }
     private HandLayoutAnimator handLayout;
     private int defaultSortingOrder = 0;
     private Coroutine popCoroutine = null;

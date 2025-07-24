@@ -85,47 +85,6 @@ public class CardGenerator : MonoBehaviour
             Debug.Log("[CardGenerator] Disabled card prefab in Start");
         }
         
-        // CRITICAL FIX: Ensure CardCanvas is active
-        if (cardCanvasParent != null)
-        {
-            // Add the CardCanvasMonitor component if it doesn't exist
-            CardCanvasMonitor monitor = cardCanvasParent.GetComponent<CardCanvasMonitor>();
-            if (monitor == null)
-            {
-                monitor = cardCanvasParent.gameObject.AddComponent<CardCanvasMonitor>();
-                Debug.Log("[CardGenerator] Added CardCanvasMonitor to CardCanvas");
-            }
-            
-            if (!cardCanvasParent.gameObject.activeInHierarchy)
-            {
-                Debug.Log("[CardGenerator] CRITICAL FIX: CardCanvas was inactive! Activating it.");
-                cardCanvasParent.gameObject.SetActive(true);
-                
-                // Also ensure all parent objects are active
-                Transform parent = cardCanvasParent.parent;
-                while (parent != null)
-                {
-                    if (!parent.gameObject.activeInHierarchy)
-                    {
-                        Debug.Log($"[CardGenerator] CRITICAL FIX: Activating parent {parent.name}");
-                        parent.gameObject.SetActive(true);
-                    }
-                    parent = parent.parent;
-                }
-            }
-            else
-            {
-                Debug.Log("[CardGenerator] CardCanvas is already active.");
-            }
-            
-            // Add a delayed check to ensure CardCanvas stays active
-            StartCoroutine(EnsureCardCanvasStaysActive());
-        }
-        else
-        {
-            Debug.LogWarning("[CardGenerator] cardCanvasParent is not assigned! Cards may not be visible.");
-        }
-        
         if (DaemonAffinityManager.Instance != null)
         {
             DaemonAffinityManager.Instance.LoadDaemonsAffinity(() =>
@@ -141,118 +100,97 @@ public class CardGenerator : MonoBehaviour
 
     IEnumerator GenerateCardsFromSpreadsheet()
     {
+        // Download and parse Abilities
+        yield return StartCoroutine(DownloadAbilities());
+        // Download and parse PlayerDeck, then generate cards
         yield return StartCoroutine(DownloadAndGeneratePlayerDeck());
     }
 
     IEnumerator DownloadAbilities()
     {
-        Debug.Log("[CardGenerator] Downloading abilities from Google Sheets...");
-        using (UnityWebRequest www = UnityWebRequest.Get(abilitiesCsvUrl))
+        UnityWebRequest www = UnityWebRequest.Get(abilitiesCsvUrl);
+        yield return www.SendWebRequest();
+        if (www.result != UnityWebRequest.Result.Success)
         {
-            yield return www.SendWebRequest();
-            if (www.result == UnityWebRequest.Result.Success)
-            {
-                ParseAbilitiesCsv(www.downloadHandler.text);
-            }
+            Debug.LogError("Failed to download Abilities CSV: " + www.error);
+            yield break;
         }
+        ParseAbilitiesCsv(www.downloadHandler.text);
     }
 
     IEnumerator DownloadAndGeneratePlayerDeck()
     {
-        Debug.Log("[CardGenerator] Downloading player deck from Google Sheets...");
-        using (UnityWebRequest www = UnityWebRequest.Get(playerDeckCsvUrl))
+        UnityWebRequest www = UnityWebRequest.Get(playerDeckCsvUrl);
+        yield return www.SendWebRequest();
+        if (www.result != UnityWebRequest.Result.Success)
         {
-            yield return www.SendWebRequest();
-            if (www.result == UnityWebRequest.Result.Success)
-            {
-                ParsePlayerDeckCsvAndGenerate(www.downloadHandler.text);
-            }
+            Debug.LogError("Failed to download PlayerDeck CSV: " + www.error);
+            yield break;
         }
+        ParsePlayerDeckCsvAndGenerate(www.downloadHandler.text);
     }
 
     // Minimal CSV parser that handles quoted fields and commas inside fields
-    string[][] ParseCsv(string csv)
+    List<string[]> ParseCsv(string csv)
     {
-        List<string[]> rows = new List<string[]>();
-        List<string> row = new List<string>();
-        bool inQuotes = false;
-        string field = "";
-        
-        for (int i = 0; i < csv.Length; i++)
+        var result = new List<string[]>();
+        var lines = csv.Split('\n');
+        foreach (var rawLine in lines)
         {
-            char c = csv[i];
-            
-            if (c == '"')
+            var line = rawLine.Trim();
+            if (string.IsNullOrWhiteSpace(line)) continue;
+            var fields = new List<string>();
+            bool inQuotes = false;
+            string curField = "";
+            for (int i = 0; i < line.Length; i++)
             {
-                if (inQuotes && i + 1 < csv.Length && csv[i + 1] == '"')
+                char c = line[i];
+                if (c == '"')
                 {
-                    // Double quotes inside quotes = escaped quote
-                    field += '"';
-                    i++; // Skip the next quote
+                    if (inQuotes && i + 1 < line.Length && line[i + 1] == '"')
+                    {
+                        curField += '"';
+                        i++; // skip escaped quote
+                    }
+                    else
+                    {
+                        inQuotes = !inQuotes;
+                    }
+                }
+                else if (c == ',' && !inQuotes)
+                {
+                    fields.Add(curField);
+                    curField = "";
                 }
                 else
                 {
-                    // Toggle quote state
-                    inQuotes = !inQuotes;
+                    curField += c;
                 }
             }
-            else if (c == ',' && !inQuotes)
-            {
-                // End of field
-                row.Add(field);
-                field = "";
-            }
-            else if ((c == '\n' || c == '\r') && !inQuotes)
-            {
-                // End of row
-                if (field.Length > 0 || row.Count > 0)
-                {
-                    row.Add(field);
-                    rows.Add(row.ToArray());
-                    row.Clear();
-                    field = "";
-                }
-                
-                // Skip \r\n
-                if (c == '\r' && i + 1 < csv.Length && csv[i + 1] == '\n')
-                {
-                    i++;
-                }
-            }
-            else
-            {
-                field += c;
-            }
+            fields.Add(curField); // last field
+            result.Add(fields.ToArray());
         }
-        
-        // Add the last field and row if any
-        if (field.Length > 0 || row.Count > 0)
-        {
-            row.Add(field);
-            rows.Add(row.ToArray());
-        }
-        
-        return rows.ToArray();
+        return result;
     }
 
     void ParseAbilitiesCsv(string csv)
     {
         var rows = ParseCsv(csv);
-        Debug.Log($"[CardGenerator] Abilities CSV: Parsed {rows.Length} rows");
-        if (rows.Length < 2) return;
+        Debug.Log($"[CardGenerator] Abilities CSV: Parsed {rows.Count} rows");
+        if (rows.Count < 2) return;
         var header = rows[0];
         int titleIdx = System.Array.IndexOf(header, "Title");
         int affinityIdx = System.Array.IndexOf(header, "Affinity");
         int costIdx = System.Array.IndexOf(header, "Cost");
         int typeIdx = System.Array.IndexOf(header, "Type");
         int effectIdx = System.Array.IndexOf(header, "Effect");
-        
-        for (int i = 1; i < rows.Length; i++)
+
+        for (int i = 1; i < rows.Count; i++)
         {
             var row = rows[i];
             if (row.Length <= Mathf.Max(titleIdx, affinityIdx, costIdx, typeIdx, effectIdx)) continue;
             if (string.IsNullOrWhiteSpace(row[titleIdx])) continue;
-            
+
             var card = new CardData
             {
                 title = row[titleIdx].Trim(),
@@ -261,7 +199,6 @@ public class CardGenerator : MonoBehaviour
                 type = row[typeIdx].Trim(),
                 effect = row[effectIdx].Trim()
             };
-            
             abilitiesDict[card.title] = card;
             Debug.Log($"[CardGenerator] Loaded ability: {card.title} ({card.type})");
         }
@@ -270,34 +207,32 @@ public class CardGenerator : MonoBehaviour
     void ParsePlayerDeckCsvAndGenerate(string csv)
     {
         var rows = ParseCsv(csv);
-        Debug.Log($"[CardGenerator] PlayerDeck CSV: Parsed {rows.Length} rows");
-        if (rows.Length < 2) return;
+        Debug.Log($"[CardGenerator] PlayerDeck CSV: Parsed {rows.Count} rows");
+        if (rows.Count < 2) return;
         var header = rows[0];
         int titleIdx = System.Array.IndexOf(header, "Title");
         int daemonIdx = System.Array.IndexOf(header, "Daemon");
         int qtyIdx = System.Array.IndexOf(header, "Quantity");
         playerDeckList = new List<DeckEntry>(); // Store the deck for later use
-        
-        for (int i = 1; i < rows.Length; i++)
-        {
-            var row = rows[i];
-            if (row.Length <= Mathf.Max(titleIdx, daemonIdx, qtyIdx)) continue;
-            if (string.IsNullOrWhiteSpace(row[titleIdx])) continue;
-            string title = row[titleIdx].Trim();
-            string daemonName = row[daemonIdx].Trim();
-            int quantity = int.TryParse(row[qtyIdx], out int q) ? q : 1;
-            if (!abilitiesDict.ContainsKey(title)) {
-                Debug.LogWarning($"[CardGenerator] PlayerDeck references unknown card: {title}");
-                continue;
-            }
-            var cardData = abilitiesDict[title];
-            for (int j = 0; j < quantity; j++)
-            {
-                playerDeckList.Add(new DeckEntry { card = cardData, daemonName = daemonName });
-                Debug.Log($"[CardGenerator] Added card to deck: {cardData.title} for daemon {daemonName}");
-            }
-        }
-        
+for (int i = 1; i < rows.Count; i++)
+{
+    var row = rows[i];
+    if (row.Length <= Mathf.Max(titleIdx, daemonIdx, qtyIdx)) continue;
+    if (string.IsNullOrWhiteSpace(row[titleIdx])) continue;
+    string title = row[titleIdx].Trim();
+    string daemonName = row[daemonIdx].Trim();
+    int quantity = int.TryParse(row[qtyIdx], out int q) ? q : 1;
+    if (!abilitiesDict.ContainsKey(title)) {
+        Debug.LogWarning($"[CardGenerator] PlayerDeck references unknown card: {title}");
+        continue;
+    }
+    var cardData = abilitiesDict[title];
+    for (int j = 0; j < quantity; j++)
+    {
+        playerDeckList.Add(new DeckEntry { card = cardData, daemonName = daemonName });
+        Debug.Log($"[CardGenerator] Added card to deck: {cardData.title} for daemon {daemonName}");
+    }
+}
         Debug.Log($"[CardGenerator] Total cards in deck: {playerDeckList.Count}");
         // Shuffle playerDeckList
         playerDeckList = playerDeckList.OrderBy(x => Random.value).ToList();
@@ -351,38 +286,8 @@ public class CardGenerator : MonoBehaviour
             }
         }
         
-        // CRITICAL FIX: Get ALL cards in the hand, not just the newly created ones
-        List<GameObject> allCards = new List<GameObject>();
-        
-        // First add existing cards in the hand
-        if (cardDropZoneParent != null)
-        {
-            HandLayoutAnimator layoutAnimator = cardDropZoneParent.GetComponent<HandLayoutAnimator>();
-            if (layoutAnimator != null && layoutAnimator.cardParent != null)
-            {
-                // Add all active cards from the hand
-                for (int i = 0; i < layoutAnimator.cardParent.childCount; i++)
-                {
-                    Transform child = layoutAnimator.cardParent.GetChild(i);
-                    if (child != null && child.gameObject.activeSelf && child.GetComponent<CardDisplay>() != null)
-                    {
-                        // Don't add the newly instantiated cards again (they'll be added below)
-                        if (!instantiatedCards.Contains(child.gameObject))
-                        {
-                            allCards.Add(child.gameObject);
-                        }
-                    }
-                }
-            }
-        }
-        
-        // Then add the newly instantiated cards
-        allCards.AddRange(instantiatedCards);
-        
-        Debug.Log($"[CardGenerator] Arranging {allCards.Count} total cards ({instantiatedCards.Count} new + {allCards.Count - instantiatedCards.Count} existing)");
-        
-        // Arrange ALL cards, not just the new ones
-        ArrangeCards(allCards);
+        // Arrange the newly dealt cards
+        ArrangeCards(instantiatedCards);
     }
     
     // Deal the initial hand of cards at the start of the game
@@ -444,37 +349,11 @@ public class CardGenerator : MonoBehaviour
             Debug.Log($"[CardGenerator] Reset prefab RectTransform scale to {prefabRT.localScale} and position to {prefabRT.anchoredPosition} before instantiation");
         }
         
-        // SUPER CRITICAL DEBUG: Log prefab state right before instantiation
-        Debug.Log($"[CardGenerator] PREFAB STATE RIGHT BEFORE INSTANTIATION: active={cardPrefab.activeSelf}, transform.scale={cardPrefab.transform.localScale}, RectTransform.scale={cardPrefab.GetComponent<RectTransform>()?.localScale}, prefab.name={cardPrefab.name}");
-        
-        // CRITICAL FIX: Ensure CardCanvas is active before instantiating cards
-        if (cardCanvasParent != null && !cardCanvasParent.gameObject.activeInHierarchy)
-        {
-            Debug.Log($"[CardGenerator] CRITICAL FIX: CardCanvas was inactive before instantiating {card.title}! Activating it.");
-            cardCanvasParent.gameObject.SetActive(true);
-            
-            // Also ensure all parent objects are active
-            Transform parent = cardCanvasParent.parent;
-            while (parent != null)
-            {
-                if (!parent.gameObject.activeInHierarchy)
-                {
-                    Debug.Log($"[CardGenerator] CRITICAL FIX: Activating parent {parent.name}");
-                    parent.gameObject.SetActive(true);
-                }
-                parent = parent.parent;
-            }
-        }
-        
         // Instantiate cards directly under CardCanvas for proper UI rendering
         var cardObj = Instantiate(cardPrefab, cardCanvasParent != null ? cardCanvasParent : cardDropZoneParent);
         
-        // SUPER CRITICAL DEBUG: Log clone state immediately after instantiation BEFORE any changes
-        Debug.Log($"[CardGenerator] CLONE STATE IMMEDIATELY AFTER INSTANTIATION (BEFORE CHANGES): active={cardObj.activeSelf}, transform.scale={cardObj.transform.localScale}, RectTransform.scale={cardObj.GetComponent<RectTransform>()?.localScale}, clone.name={cardObj.name}");
-        
         // Disable the prefab again after instantiation WITHOUT changing its scale
         cardPrefab.SetActive(false);
-        // DO NOT set scale to zero here - it causes issues with clones
         
         // Ensure the instantiated card is active and visible
         cardObj.SetActive(true);
@@ -487,66 +366,8 @@ public class CardGenerator : MonoBehaviour
         if (cardRT != null)
         {
             cardRT.localScale = Vector3.one;
-            Debug.Log($"[CardGenerator] Explicitly set card {card.title} RectTransform scale to {cardRT.localScale}");
         }
-        
-        Debug.Log($"[CardGenerator] Explicitly set card {card.title} transform scale to {cardObj.transform.localScale} immediately after instantiation");
-        
-        // Set a proper position in front of other cards
-        RectTransform rectTransform = cardObj.GetComponent<RectTransform>();
-        if (rectTransform != null)
-        {
-            // Reset RectTransform scale explicitly
-            rectTransform.localScale = Vector3.one;
-            Debug.Log($"[CardGenerator] Explicitly set RectTransform scale to {rectTransform.localScale}");
-            
-            // Reset any negative position values
-            rectTransform.anchoredPosition = new Vector2(50, 0);
-            
-            // Ensure Z position is appropriate for UI visibility
-            Vector3 localPos = rectTransform.localPosition;
-            if (localPos.z != 0)
-            {
-                localPos.z = 0;
-                rectTransform.localPosition = localPos;
-                Debug.Log($"[CardGenerator] Set card {card.title} Z position to {localPos.z} for UI visibility");
-            }
-            
-            // Force update the RectTransform
-            LayoutRebuilder.ForceRebuildLayoutImmediate(rectTransform);
-        }
-        
-        // Debug card properties
-        Debug.Log($"[CardGenerator] Card {card.title} instantiated under {(cardCanvasParent != null ? "CardCanvas" : "CardDropZone")}");
-        Debug.Log($"[CardGenerator] Card {card.title} active: {cardObj.activeSelf}, scale: {cardObj.transform.localScale}");
-        
-        // Set card data
-        Debug.Log($"[CardGenerator] Instantiated card: {card.title} for daemon {daemonName}");
-        var display = cardObj.GetComponent<CardDisplay>();
-        if (display)
-        {
-            Color affinityColor = Color.white;
-            if (!string.IsNullOrEmpty(daemonName))
-            {
-                if (DaemonAffinityManager.Instance != null && DaemonAffinityManager.Instance.TryGetAffinity(daemonName, out var affinity))
-                {
-                    affinityColor = AffinityColor.GetColor(affinity);
-                    Debug.Log($"[CardGenerator] Using daemon affinity color for {daemonName}: {affinity}");
-                }
-                else
-                {
-                    // fallback: use card.affinity from Abilities sheet
-                    affinityColor = AffinityColor.GetColor(AffinityColor.FromString(card.affinity));
-                }
-            }
-            else
-            {
-                affinityColor = AffinityColor.GetColor(AffinityColor.FromString(card.affinity));
-            }
-            display.SetCard(card.title, card.cost, card.type, card.effect, affinityColor);
-        }
-        
-        return cardObj;
+// This section is now handled by DealInitialHand
     }
     
     // Helper method to arrange cards in the hand layout
@@ -556,13 +377,6 @@ public class CardGenerator : MonoBehaviour
         {
             Debug.Log("[CardGenerator] No cards to arrange");
             return;
-        }
-        
-        // CRITICAL FIX: Ensure CardDropZone is active before attempting to layout cards
-        if (cardDropZoneParent != null && !cardDropZoneParent.gameObject.activeInHierarchy)
-        {
-            Debug.LogWarning("[CardGenerator] CardDropZone is inactive! Activating it before layout.");
-            cardDropZoneParent.gameObject.SetActive(true);
         }
         
         var layout = cardDropZoneParent.GetComponent<HandLayoutAnimator>();
@@ -593,61 +407,172 @@ public class CardGenerator : MonoBehaviour
             // Log post-layout scales
             StartCoroutine(LogPostLayoutScales(cards));
         }
-        else
-        {
-            Debug.LogError("[CardGenerator] HandLayoutAnimator component not found on CardDropZone!");
-        }
+    }
+    
+    class DeckEntry
+    {
+        public CardData card;
+        public string daemonName;
     }
 
-    // Coroutine to ensure CardCanvas stays active throughout the game
-    private IEnumerator EnsureCardCanvasStaysActive()
+    class CardData
     {
-        // Check multiple times with increasing intervals
-        yield return new WaitForSeconds(0.5f);
-        EnsureCardCanvasActive("0.5s check");
-        
-        yield return new WaitForSeconds(1.0f);
-        EnsureCardCanvasActive("1.5s check");
-        
-        yield return new WaitForSeconds(2.0f);
-        EnsureCardCanvasActive("3.5s check");
-        
-        yield return new WaitForSeconds(3.0f);
-        EnsureCardCanvasActive("6.5s check");
-        
-        // Continue checking periodically
-        while (true)
-        {
-            yield return new WaitForSeconds(5.0f);
-            EnsureCardCanvasActive("periodic check");
-        }
+        public string title;
+        public string affinity;
+        public string cost;
+        public string type;
+        public string effect;
+    }
+}
+    
+    // CRITICAL FIX: Reset prefab scale and position to ensure clones start with correct values
+    cardPrefab.transform.localScale = Vector3.one;
+    cardPrefab.transform.localPosition = new Vector3(0, 0, 0);
+    
+    // Fix the prefab's RectTransform
+    RectTransform prefabRT = cardPrefab.GetComponent<RectTransform>();
+    if (prefabRT != null)
+    {
+        prefabRT.localScale = Vector3.one;
+        prefabRT.anchoredPosition = Vector2.zero;
+        Debug.Log($"[CardGenerator] Reset prefab RectTransform scale to {prefabRT.localScale} and position to {prefabRT.anchoredPosition} before instantiation");
     }
     
-    // Helper method to ensure CardCanvas is active
-    private void EnsureCardCanvasActive(string checkName)
+    // SUPER CRITICAL DEBUG: Log prefab state right before instantiation
+    Debug.Log($"[CardGenerator] PREFAB STATE RIGHT BEFORE INSTANTIATION: active={cardPrefab.activeSelf}, transform.scale={cardPrefab.transform.localScale}, RectTransform.scale={cardPrefab.GetComponent<RectTransform>()?.localScale}, prefab.name={cardPrefab.name}");
+    
+    // Instantiate cards directly under CardCanvas for proper UI rendering
+    var cardObj = Instantiate(cardPrefab, cardCanvasParent != null ? cardCanvasParent : cardDropZoneParent);
+    
+    // SUPER CRITICAL DEBUG: Log clone state immediately after instantiation BEFORE any changes
+    Debug.Log($"[CardGenerator] CLONE STATE IMMEDIATELY AFTER INSTANTIATION (BEFORE CHANGES): active={cardObj.activeSelf}, transform.scale={cardObj.transform.localScale}, RectTransform.scale={cardObj.GetComponent<RectTransform>()?.localScale}, clone.name={cardObj.name}");
+    
+    // Disable the prefab again after instantiation WITHOUT changing its scale
+    cardPrefab.SetActive(false);
+    // DO NOT set scale to zero here - it causes issues with clones
+    
+    // Ensure the instantiated card is active and visible
+    cardObj.SetActive(true);
+    
+    // CRITICAL: Force scale to (1,1,1) immediately after instantiation
+    cardObj.transform.localScale = Vector3.one;
+    
+    // Force RectTransform scale to (1,1,1) as well
+    RectTransform cardRT = cardObj.GetComponent<RectTransform>();
+    if (cardRT != null)
     {
-        if (cardCanvasParent != null)
+        cardRT.localScale = Vector3.one;
+        Debug.Log($"[CardGenerator] Explicitly set card {card.title} RectTransform scale to {cardRT.localScale}");
+    }
+    
+    Debug.Log($"[CardGenerator] Explicitly set card {card.title} transform scale to {cardObj.transform.localScale} immediately after instantiation");
+    
+    // Set a proper position in front of other cards
+    RectTransform rectTransform = cardObj.GetComponent<RectTransform>();
+    if (rectTransform != null)
+    {
+        // Reset RectTransform scale explicitly
+        rectTransform.localScale = Vector3.one;
+        Debug.Log($"[CardGenerator] Explicitly set RectTransform scale to {rectTransform.localScale}");
+        
+        // Reset any negative position values
+        rectTransform.anchoredPosition = new Vector2(50, 0);
+        
+        // Ensure card is visible in World Space by setting proper Z position
+        if (cardCanvasParent != null && cardCanvasParent.GetComponent<Canvas>()?.renderMode == RenderMode.WorldSpace)
         {
-            if (!cardCanvasParent.gameObject.activeInHierarchy)
+            // Position slightly in front of parent
+            Vector3 localPos = cardObj.transform.localPosition;
+            localPos.z = -0.01f * instantiatedCards.Count; // Each card slightly in front of previous (smaller offset)
+            cardObj.transform.localPosition = localPos;
+            Debug.Log($"[CardGenerator] Set card {card.title} Z position to {localPos.z} for World Space visibility");
+        }
+        else
+        {
+            // For UI cards, ensure Z is slightly positive to be visible
+            Vector3 localPos = cardObj.transform.localPosition;
+            localPos.z = 0;
+            cardObj.transform.localPosition = localPos;
+            Debug.Log($"[CardGenerator] Set card {card.title} Z position to {localPos.z} for UI visibility");
+        }
+        
+        // Force update the RectTransform
+        LayoutRebuilder.ForceRebuildLayoutImmediate(rectTransform);
+    }
+    
+    instantiatedCards.Add(cardObj);
+    
+    // Debug card properties
+    Debug.Log($"[CardGenerator] Card {card.title} instantiated under {(cardCanvasParent != null ? "CardCanvas" : "CardDropZone")}");
+    Debug.Log($"[CardGenerator] Card {card.title} position: {cardObj.transform.position}, localPosition: {cardObj.transform.localPosition}, scale: {cardObj.transform.localScale}");
+    Debug.Log($"[CardGenerator] Card {card.title} RectTransform - anchoredPosition: {cardObj.GetComponent<RectTransform>().anchoredPosition}, sizeDelta: {cardObj.GetComponent<RectTransform>().sizeDelta}, pivot: {cardObj.GetComponent<RectTransform>().pivot}");
+    
+    // Check if card has required components
+    var image = cardObj.GetComponentInChildren<UnityEngine.UI.Image>();
+    Debug.Log($"[CardGenerator] Card {card.title} has Image component: {image != null}, Enabled: {image?.enabled}, Color: {image?.color}");
+    Debug.Log($"[CardGenerator] Instantiated card: {card.title} for daemon {daemonName}");
+    var display = cardObj.GetComponent<CardDisplay>();
+    if (display)
+    {
+        Color affinityColor = Color.white;
+        if (!string.IsNullOrEmpty(daemonName))
+        {
+            if (DaemonAffinityManager.Instance != null && DaemonAffinityManager.Instance.TryGetAffinity(daemonName, out var affinity))
             {
-                Debug.LogWarning($"[CardGenerator] {checkName}: CardCanvas was inactive! Re-activating it.");
-                cardCanvasParent.gameObject.SetActive(true);
-                
-                // Also ensure all parent objects are active
-                Transform parent = cardCanvasParent.parent;
-                while (parent != null)
-                {
-                    if (!parent.gameObject.activeInHierarchy)
-                    {
-                        Debug.LogWarning($"[CardGenerator] {checkName}: Parent {parent.name} was inactive! Re-activating it.");
-                        parent.gameObject.SetActive(true);
-                    }
-                    parent = parent.parent;
-                }
+                affinityColor = AffinityColor.GetColor(affinity);
+            }
+            else
+            {
+                // fallback: use card.affinity from Abilities sheet
+                affinityColor = AffinityColor.GetColor(AffinityColor.FromString(card.affinity));
             }
         }
+        else
+        {
+            affinityColor = AffinityColor.GetColor(AffinityColor.FromString(card.affinity));
+        }
+        display.SetCard(card.title, card.cost, card.type, card.effect, affinityColor);
     }
-    
+}
+        // Helper method to arrange cards in the hand layout
+        private void ArrangeCards(List<GameObject> cards)
+        {
+            if (cards.Count == 0)
+            {
+                Debug.Log("[CardGenerator] No cards to arrange");
+                return;
+            }
+            
+            var layout = cardDropZoneParent.GetComponent<HandLayoutAnimator>();
+            if (layout != null)
+            {
+                // Force all cards to be visible with correct scale before layout
+                foreach (var card in cards)
+                {
+                    if (card != null)
+                    {
+                        card.transform.localScale = Vector3.one;
+                        card.SetActive(true);
+                        
+                        // Ensure RectTransform is properly scaled
+                        RectTransform rt = card.GetComponent<RectTransform>();
+                        if (rt != null)
+                        {
+                            rt.localScale = Vector3.one;
+                        }
+                        
+                        Debug.Log($"[CardGenerator] Pre-layout card scale: {card.transform.localScale}");
+                    }
+                }
+                
+                // Now layout the cards
+                layout.LayoutCards();
+                
+                // Log post-layout scales
+                StartCoroutine(LogPostLayoutScales(cards));
+            }
+    }
+
     // Coroutine to log card scales after layout is complete
     private IEnumerator LogPostLayoutScales(List<GameObject> cards)
     {
@@ -698,19 +623,18 @@ public class CardGenerator : MonoBehaviour
         }
     }
 
-    // Card data classes
     class DeckEntry
-    {
-        public CardData card;
-        public string daemonName;
-    }
+{
+    public CardData card;
+    public string daemonName;
+}
 
-    class CardData
-    {
-        public string title;
-        public string affinity;
-        public string cost;
-        public string type;
-        public string effect;
-    }
+class CardData
+{
+    public string title;
+    public string affinity;
+    public string cost;
+    public string type;
+    public string effect;
+}
 }

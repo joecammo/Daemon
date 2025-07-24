@@ -29,11 +29,20 @@ public class HidePrefabInScene : MonoBehaviour
             Debug.Log($"[HidePrefabInScene] Found Card in scene - hiding it");
             cardInScene.SetActive(false);
             
-            // Also hide its parent if it has one
+            // Also hide its parent if it has one, but NEVER hide CardCanvas
             if (cardInScene.transform.parent != null)
             {
-                Debug.Log($"[HidePrefabInScene] Also hiding Card's parent: {cardInScene.transform.parent.gameObject.name}");
-                cardInScene.transform.parent.gameObject.SetActive(false);
+                // CRITICAL FIX: Don't hide CardCanvas or any parent containing CardCanvas
+                if (cardInScene.transform.parent.name != "CardCanvas" && 
+                    !cardInScene.transform.parent.name.Contains("CardCanvas"))
+                {
+                    Debug.Log($"[HidePrefabInScene] Also hiding Card's parent: {cardInScene.transform.parent.gameObject.name}");
+                    cardInScene.transform.parent.gameObject.SetActive(false);
+                }
+                else
+                {
+                    Debug.Log($"[HidePrefabInScene] NOT hiding Card's parent because it's CardCanvas: {cardInScene.transform.parent.gameObject.name}");
+                }
             }
         }
         else
@@ -42,12 +51,14 @@ public class HidePrefabInScene : MonoBehaviour
         }
         
         // Method 2: Find all GameObjects in scene and check if name contains "Card"
-        GameObject[] allObjects = Object.FindObjectsOfType<GameObject>();
+        GameObject[] allObjects = Object.FindObjectsByType<GameObject>(FindObjectsSortMode.None);
         foreach (GameObject obj in allObjects)
         {
-            if (obj.name.Contains("Card") && !obj.name.Contains("Clone") && !obj.name.Contains("Parent") && !obj.name.Contains("Zone"))
+            // CRITICAL FIX: Only hide the original Card prefab, not any clones or instantiated cards
+            // Check for exact name match "Card" and ensure it's not a clone
+            if (obj.name == "Card" && !obj.name.Contains("Clone") && !obj.name.Contains("Parent") && !obj.name.Contains("Zone"))
             {
-                Debug.Log($"[HidePrefabInScene] Found Card-like object: {obj.name} - hiding it");
+                Debug.Log($"[HidePrefabInScene] Found Card prefab: {obj.name} - hiding it");
                 obj.SetActive(false);
                 
                 // Also hide its parent if it has one
@@ -60,7 +71,7 @@ public class HidePrefabInScene : MonoBehaviour
         }
         
         // Find all instances of this script in the scene
-        HidePrefabInScene[] prefabHiders = Object.FindObjectsOfType<HidePrefabInScene>();
+        HidePrefabInScene[] prefabHiders = Object.FindObjectsByType<HidePrefabInScene>(FindObjectsSortMode.None);
         
         foreach (var hider in prefabHiders)
         {
@@ -94,8 +105,26 @@ public class HidePrefabInScene : MonoBehaviour
     
     void Awake()
     {
+        // CRITICAL FIX: Only hide this specific GameObject if it's the original prefab, not a clone
+        if (gameObject.name.Contains("Clone"))
+        {
+            Debug.Log($"[HidePrefabInScene] Awake on {gameObject.name} - NOT hiding it because it's a clone");
+            // Remove this component from clones to prevent any issues
+            Destroy(this);
+            return;
+        }
+        
         // Backup method in case the static method doesn't catch it
         Debug.Log($"[HidePrefabInScene] Awake on {gameObject.name} - hiding it");
+        
+        // CRITICAL FIX: Don't disable if this is CardCanvas or part of CardCanvas
+        if (gameObject.name == "CardCanvas" || gameObject.name.Contains("CardCanvas"))
+        {
+            Debug.Log($"[HidePrefabInScene] NOT hiding {gameObject.name} because it's CardCanvas");
+            // Remove this component from CardCanvas to prevent any issues
+            Destroy(this);
+            return;
+        }
         
         // Force disable this GameObject - even if it's static
         gameObject.SetActive(false);
@@ -105,16 +134,24 @@ public class HidePrefabInScene : MonoBehaviour
         
         if (disableParentToo && transform.parent != null)
         {
-            transform.parent.gameObject.SetActive(false);
-            // Also disable parent's renderers
-            DisableAllRenderers(transform.parent.gameObject);
+            // CRITICAL FIX: Don't disable parent if it's CardCanvas
+            if (transform.parent.name == "CardCanvas" || transform.parent.name.Contains("CardCanvas"))
+            {
+                Debug.Log($"[HidePrefabInScene] NOT hiding parent {transform.parent.name} because it's CardCanvas");
+            }
+            else
+            {
+                transform.parent.gameObject.SetActive(false);
+                // Also disable parent's renderers
+                DisableAllRenderers(transform.parent.gameObject);
+            }
         }
         
         // If a target name is specified, find and hide that object
         if (!string.IsNullOrEmpty(targetGameObjectName))
         {
             GameObject targetObj = GameObject.Find(targetGameObjectName);
-            if (targetObj != null)
+            if (targetObj != null && !targetObj.name.Contains("Clone"))
             {
                 Debug.Log($"[HidePrefabInScene] Hiding target: {targetObj.name}");
                 targetObj.SetActive(false);
@@ -124,8 +161,9 @@ public class HidePrefabInScene : MonoBehaviour
         }
         
         // Try to find the Card object specifically and ensure it's hidden
+        // CRITICAL FIX: Only hide the original Card prefab, not clones
         GameObject cardObj = GameObject.Find("Card");
-        if (cardObj != null)
+        if (cardObj != null && cardObj.name == "Card" && !cardObj.name.Contains("Clone"))
         {
             Debug.Log($"[HidePrefabInScene] Found Card object in Awake - forcing it hidden");
             cardObj.SetActive(false);
@@ -138,10 +176,32 @@ public class HidePrefabInScene : MonoBehaviour
     {
         if (obj == null) return;
         
+        // CRITICAL FIX: Don't disable renderers on clones or CardCanvas
+        if (obj.name.Contains("Clone") || obj.name == "CardCanvas" || obj.name.Contains("CardCanvas"))
+        {
+            Debug.Log($"[HidePrefabInScene] NOT disabling renderers on {obj.name} because it's a clone or CardCanvas");
+            return;
+        }
+        
+        // Check if this object is a child of CardCanvas
+        Transform parent = obj.transform.parent;
+        while (parent != null)
+        {
+            if (parent.name == "CardCanvas" || parent.name.Contains("CardCanvas"))
+            {
+                Debug.Log($"[HidePrefabInScene] NOT disabling renderers on {obj.name} because it's a child of CardCanvas");
+                return;
+            }
+            parent = parent.parent;
+        }
+        
         // Disable all renderers
         Renderer[] renderers = obj.GetComponentsInChildren<Renderer>(true);
         foreach (var renderer in renderers)
         {
+            // Skip clones
+            if (renderer.gameObject.name.Contains("Clone")) continue;
+            
             renderer.enabled = false;
             Debug.Log($"[HidePrefabInScene] Disabled renderer on {renderer.gameObject.name}");
         }
@@ -150,14 +210,45 @@ public class HidePrefabInScene : MonoBehaviour
         UnityEngine.UI.Graphic[] graphics = obj.GetComponentsInChildren<UnityEngine.UI.Graphic>(true);
         foreach (var graphic in graphics)
         {
+            // Skip clones
+            if (graphic.gameObject.name.Contains("Clone")) continue;
+            
             graphic.enabled = false;
             Debug.Log($"[HidePrefabInScene] Disabled UI graphic on {graphic.gameObject.name}");
         }
         
-        // Disable any Canvas components
+        // Disable any Canvas components, but NEVER CardCanvas
         Canvas[] canvases = obj.GetComponentsInChildren<Canvas>(true);
         foreach (var canvas in canvases)
         {
+            // Skip clones and CardCanvas
+            if (canvas.gameObject.name.Contains("Clone") || 
+                canvas.gameObject.name == "CardCanvas" || 
+                canvas.gameObject.name.Contains("CardCanvas"))
+            {
+                Debug.Log($"[HidePrefabInScene] NOT disabling Canvas on {canvas.gameObject.name} (protected)");
+                continue;
+            }
+            
+            // Check if this canvas is a child of CardCanvas
+            bool isChildOfCardCanvas = false;
+            Transform canvasParent = canvas.transform.parent;
+            while (canvasParent != null)
+            {
+                if (canvasParent.name == "CardCanvas" || canvasParent.name.Contains("CardCanvas"))
+                {
+                    isChildOfCardCanvas = true;
+                    break;
+                }
+                canvasParent = canvasParent.parent;
+            }
+            
+            if (isChildOfCardCanvas)
+            {
+                Debug.Log($"[HidePrefabInScene] NOT disabling Canvas on {canvas.gameObject.name} (child of CardCanvas)");
+                continue;
+            }
+            
             canvas.enabled = false;
             Debug.Log($"[HidePrefabInScene] Disabled Canvas on {canvas.gameObject.name}");
         }
